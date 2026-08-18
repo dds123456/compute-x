@@ -13,3 +13,5 @@ server/data/*.db-shm
 server/data/*.db-wal
 .DS_Store
 Thumbs.db
+
+.vercel
