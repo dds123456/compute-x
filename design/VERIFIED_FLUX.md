@@ -1,0 +1,11 @@
+# Verified Flux
+
+Verified Flux treats infrastructure as a living field whose motion is always measurable. Space is not a neutral backdrop: deep, quiet expanses hold compact islands of operational truth, while hairline grids and calibrated paths imply capacity moving through a governed system. Forms are exact, low-radius, and engineered rather than decorative. Every alignment must feel meticulously crafted, as if its coordinates were checked through countless hours of refinement.
+
+Color behaves as telemetry. Carbon black and mineral white establish authority; ion green marks healthy motion, arctic cyan identifies active control, and signal amber appears only where human judgment is required. Saturation is scarce, so state is readable before language. The palette must show master-level restraint, with painstaking contrast calibration across light and dark surfaces.
+
+Scale separates command from evidence. A small number of decisive figures carry monumental weight, while dense micro-labels, ticks, nodes, and reference codes prove that the system beneath them is observable. Rhythm comes from repeated cells and measured gaps, never ornamental repetition. The result should look labored over by someone at the top of their field: every interval deliberate, every cluster optically balanced.
+
+Composition favors asymmetric stability. A strong vertical datum anchors the field while trajectories and status pulses create controlled motion around it. Information is expressed through proximity, direction, and density; words are sparse, clinical, and essential. Negative space must remain active and precisely apportioned, giving critical signals room to breathe without making the work feel empty.
+
+The hidden reference is the path of electrical current becoming accountable compute: invisible energy enters a lattice, is transformed into named capacity, and leaves an auditable trace. This idea should never be illustrated literally. It is embedded through branching routes, pulse intervals, checksum-like markers, and the quiet transition from amber uncertainty to green verification. The finished artifact must exhibit painstaking attention and master-level execution, a visual proof that ephemeral flow can be trusted because it can be measured.

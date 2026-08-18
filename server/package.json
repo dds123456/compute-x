@@ -1,0 +1,19 @@
+{
+  "name": "compute-x-server",
+  "version": "1.0.0",
+  "description": "ComputeX 算力租赁平台 - 后端服务",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=23.4.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5"
+  }
+}
