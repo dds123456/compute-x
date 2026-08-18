@@ -153,8 +153,8 @@ export default function Login() {
             <Button type="primary" htmlType="submit" block loading={loading} style={{ height: 44, borderRadius: 8, fontSize: 15 }}>登 录</Button>
           </Form>
 
-          {/* 开发环境体验入口；生产构建中不渲染 */}
-          {isDev && <><Button
+          {/* 生产环境安全游客入口 */}
+          <Button
             block
             icon={<RocketOutlined />}
             loading={guestLoading}
@@ -164,34 +164,35 @@ export default function Login() {
             游客体验模式 · 无需账号密码
           </Button>
           <div style={{ textAlign: 'center', color: '#a6b0c0', fontSize: 11, marginTop: 8 }}>
-            游客可浏览全部演示数据与界面；注册企业账号后数据相互隔离
+            30 分钟只读体验 · 演示租户隔离 · 不可支付、审批或修改数据
           </div>
 
-          <Divider plain style={{ color: '#a6b0c0', fontSize: 12 }}>开发环境 · 角色验收</Divider>
+          {isDev && <>
+            <Divider plain style={{ color: '#a6b0c0', fontSize: 12 }}>开发环境 · 角色验收</Divider>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-            {DEMO_ACCOUNTS.map(a => (
-              <div
-                key={a.key}
-                onClick={() => quickLogin(a)}
-                style={{
-                  border: '1px solid #eef0f4', borderRadius: 10, padding: '10px 8px', textAlign: 'center', cursor: 'pointer',
-                  transition: 'all .2s', background: '#fff',
-                }}
-                onMouseEnter={e => (e.currentTarget.style.borderColor = a.color, e.currentTarget.style.boxShadow = `0 4px 12px rgba(0,0,0,.06)`)}
-                onMouseLeave={e => (e.currentTarget.style.borderColor = '#eef0f4', e.currentTarget.style.boxShadow = 'none')}
-              >
-                <div style={{ width: 34, height: 34, borderRadius: '50%', background: a.color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, margin: '0 auto 6px', fontSize: 13 }}>
-                  {a.name[0]}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+              {DEMO_ACCOUNTS.map(a => (
+                <div
+                  key={a.key}
+                  onClick={() => quickLogin(a)}
+                  style={{
+                    border: '1px solid #eef0f4', borderRadius: 10, padding: '10px 8px', textAlign: 'center', cursor: 'pointer',
+                    transition: 'all .2s', background: '#fff',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = a.color, e.currentTarget.style.boxShadow = `0 4px 12px rgba(0,0,0,.06)`)}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = '#eef0f4', e.currentTarget.style.boxShadow = 'none')}
+                >
+                  <div style={{ width: 34, height: 34, borderRadius: '50%', background: a.color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, margin: '0 auto 6px', fontSize: 13 }}>
+                    {a.name[0]}
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#1f2d3d' }}>{a.name}</div>
+                  <div style={{ fontSize: 10, color: '#7a8699' }}>{a.role}</div>
+                  <Tag style={{ fontSize: 9, marginTop: 4, padding: '0 6px' }} color={a.type === 'console' ? 'blue' : a.type === 'provider' ? 'cyan' : 'red'}>
+                    {a.type === 'console' ? '控制台' : a.type === 'provider' ? '资源方' : '平台'}
+                  </Tag>
                 </div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#1f2d3d' }}>{a.name}</div>
-                <div style={{ fontSize: 10, color: '#7a8699' }}>{a.role}</div>
-                <Tag style={{ fontSize: 9, marginTop: 4, padding: '0 6px' }} color={a.type === 'console' ? 'blue' : a.type === 'provider' ? 'cyan' : 'red'}>
-                  {a.type === 'console' ? '控制台' : a.type === 'provider' ? '资源方' : '平台'}
-                </Tag>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
           </>}
 
           <div style={{ textAlign: 'center', color: '#a6b0c0', fontSize: 11, marginTop: 20 }}>

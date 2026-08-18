@@ -122,7 +122,7 @@ r.get('/instances', (req, res) => {
 });
 
 r.get('/instances/:id', (req, res) => {
-  const inst = db.prepare('SELECT * FROM instances WHERE id = ?').get(req.params.id);
+  const inst = db.prepare('SELECT * FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
   if (!inst) return res.status(404).json({ ok: false, msg: '实例不存在' });
   const resource = db.prepare('SELECT * FROM resources WHERE id = ?').get(inst.resource_id);
   const alerts = db.prepare('SELECT * FROM alerts WHERE instance_id = ? ORDER BY triggered_at DESC').all(inst.id);
@@ -162,7 +162,7 @@ r.post('/instances/:id/snapshot', (req, res) => {
 
 // 日志（模拟）
 r.get('/instances/:id/logs', (req, res) => {
-  const inst = db.prepare('SELECT * FROM instances WHERE id = ?').get(req.params.id);
+  const inst = db.prepare('SELECT * FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
   const lines = [];
   if (!inst) return res.json({ ok: true, lines });
   const isTrain = inst.image.includes('训练') || inst.image.includes('PyTorch');

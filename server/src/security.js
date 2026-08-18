@@ -2,6 +2,11 @@ import crypto from 'node:crypto';
 import db from './db.js';
 
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 12 * 60 * 60 * 1000);
+export const GUEST_SESSION_TTL_MS = Number(process.env.GUEST_SESSION_TTL_MS || 30 * 60 * 1000);
+const GUEST_USER_ID = 'u-guest';
+const GUEST_ENTERPRISE_ID = 'ent-demo';
+const GUEST_SAFE_WRITE_PATHS = new Set(['/auth/logout', '/market/estimate']);
+const GUEST_BLOCKED_PATH_PREFIXES = ['/admin', '/provider', '/notify/api-keys'];
 
 export function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const derived = crypto.scryptSync(String(password), salt, 64).toString('hex');
@@ -21,10 +26,10 @@ export function verifyPassword(password, stored) {
   return actual.length === expectedBuffer.length && crypto.timingSafeEqual(actual, expectedBuffer);
 }
 
-export function createSession(userId) {
+export function createSession(userId, ttlMs = SESSION_TTL_MS) {
   const token = crypto.randomBytes(32).toString('base64url');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+  const expiresAt = new Date(Date.now() + ttlMs).toISOString();
   db.prepare('DELETE FROM auth_sessions WHERE expires_at < ?').run(new Date().toISOString());
   db.prepare('INSERT INTO auth_sessions (token_hash,user_id,expires_at) VALUES (?,?,?)')
     .run(tokenHash, userId, expiresAt);
@@ -57,7 +62,8 @@ export function authenticateApi(req, res, next) {
     return res.status(403).json({ ok: false, msg: '账号已禁用或不存在' });
   }
 
-  req.auth = { userId: member.id, enterpriseId: member.enterprise_id, role: member.role };
+  const isGuest = member.id === GUEST_USER_ID;
+  req.auth = { userId: member.id, enterpriseId: member.enterprise_id, role: member.role, isGuest };
   req.headers['x-user-id'] = member.id;
   if (member.enterprise_id) {
     if (req.query?.enterpriseId) req.query.enterpriseId = member.enterprise_id;
@@ -66,6 +72,22 @@ export function authenticateApi(req, res, next) {
   if (!['平台管理员', '资源方运营'].includes(member.role)) {
     if (req.query?.userId) req.query.userId = member.id;
     if (req.body?.userId) req.body.userId = member.id;
+  }
+
+  if (isGuest) {
+    req.query.enterpriseId = GUEST_ENTERPRISE_ID;
+    if (req.body && typeof req.body === 'object') req.body.enterpriseId = GUEST_ENTERPRISE_ID;
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-ComputeX-Guest', '1');
+
+    if (GUEST_BLOCKED_PATH_PREFIXES.some(prefix => req.path.startsWith(prefix))) {
+      return res.status(403).json({ ok: false, msg: '游客模式无权访问该区域' });
+    }
+
+    const readMethod = req.method === 'GET' || req.method === 'HEAD';
+    if (!readMethod && !GUEST_SAFE_WRITE_PATHS.has(req.path)) {
+      return res.status(403).json({ ok: false, msg: '游客模式为只读体验，不能修改数据' });
+    }
   }
   next();
 }

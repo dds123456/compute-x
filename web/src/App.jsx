@@ -11,9 +11,13 @@ const AppLayout = lazy(() => import('./app/AppLayout.jsx'));
 export default function App() {
   const loc = useLocation();
   const token = localStorage.getItem('cx_token');
+  const isGuest = localStorage.getItem('cx_guest') === '1';
   // 未登录跳登录页（App 与登录页除外）
   if (!token && loc.pathname !== '/login') return <Navigate to="/login" replace />;
   if (token && loc.pathname === '/login') return <Navigate to="/console" replace />;
+  if (token && isGuest && !import.meta.env.DEV && ['/admin', '/provider', '/app'].some(path => loc.pathname.startsWith(path))) {
+    return <Navigate to="/console" replace />;
+  }
 
   return (
     <Suspense fallback={<Spin size="large" fullscreen tip="正在加载 ComputeX" />}>

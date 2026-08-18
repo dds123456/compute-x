@@ -1,9 +1,34 @@
 import { Router } from 'express';
 import db from '../db.js';
 import { now, genId } from '../utils.js';
-import { createSession, hashPassword, revokeSession, safeMember, verifyPassword } from '../security.js';
+import { createSession, GUEST_SESSION_TTL_MS, hashPassword, revokeSession, safeMember, verifyPassword } from '../security.js';
 
 const r = Router();
+const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
+const GUEST_RATE_LIMIT_MAX = Number(process.env.GUEST_RATE_LIMIT_MAX || 20);
+const guestRateBuckets = new Map();
+
+function allowGuestSession(req, res) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '');
+  const clientKey = forwarded.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+  const currentTime = Date.now();
+  let bucket = guestRateBuckets.get(clientKey);
+  if (!bucket || bucket.resetAt <= currentTime) {
+    bucket = { count: 0, resetAt: currentTime + GUEST_RATE_LIMIT_WINDOW_MS };
+    guestRateBuckets.set(clientKey, bucket);
+  }
+
+  const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - currentTime) / 1000));
+  res.setHeader('X-RateLimit-Limit', String(GUEST_RATE_LIMIT_MAX));
+  res.setHeader('X-RateLimit-Remaining', String(Math.max(0, GUEST_RATE_LIMIT_MAX - bucket.count - 1)));
+  if (bucket.count >= GUEST_RATE_LIMIT_MAX) {
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429).json({ ok: false, msg: '游客访问过于频繁，请稍后再试' });
+    return false;
+  }
+  bucket.count += 1;
+  return true;
+}
 
 // 登录：POST /api/auth/login { account, password } 或 { userId } / { username }（兼容一键登录）
 r.post('/login', (req, res) => {
@@ -32,8 +57,8 @@ r.post('/login', (req, res) => {
 });
 
 // 游客模式：无需账号密码，一键进入（只读成员身份 + 游客标记）
-r.post('/guest', (_req, res) => {
-  if (process.env.NODE_ENV === 'production') return res.status(404).json({ ok: false, msg: '游客模式未开放' });
+r.post('/guest', (req, res) => {
+  if (!allowGuestSession(req, res)) return;
   let guest = db.prepare("SELECT * FROM members WHERE id = 'u-guest'").get();
   if (!guest) {
     db.prepare(`INSERT INTO members (id,enterprise_id,name,phone,email,password,role,status,is_demo,created_at) VALUES ('u-guest','ent-demo','游客体验账号','18800000000','guest@computex.demo','guest123','只读成员','正常',1,?)`)
@@ -41,7 +66,7 @@ r.post('/guest', (_req, res) => {
     guest = db.prepare("SELECT * FROM members WHERE id = 'u-guest'").get();
   }
   const ent = db.prepare('SELECT * FROM enterprises WHERE id = ?').get(guest.enterprise_id);
-  const session = createSession(guest.id);
+  const session = createSession(guest.id, GUEST_SESSION_TTL_MS);
   res.json({ ok: true, ...session, member: { ...safeMember(guest), is_guest: 1 }, enterprise: ent, isGuest: 1 });
 });
 
@@ -75,7 +100,9 @@ r.get('/enterprises', (req, res) => {
   const uid = req.headers['x-user-id'];
   if (!uid) return res.status(401).json({ ok: false, msg: '未登录' });
   const m = db.prepare('SELECT * FROM members WHERE id = ?').get(uid);
-  const ents = db.prepare('SELECT * FROM enterprises').all();
+  const ents = req.auth.isGuest
+    ? db.prepare('SELECT * FROM enterprises WHERE id = ?').all(req.auth.enterpriseId)
+    : db.prepare('SELECT * FROM enterprises').all();
   res.json({ ok: true, enterprises: ents, current: m.enterprise_id });
 });
 
