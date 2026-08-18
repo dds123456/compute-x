@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import db from '../db.js';
-import { createGuestSession, createSession, ensureGuestMember, hashPassword, revokeSession, safeMember, verifyPassword } from '../security.js';
+import { createGuestSession, createSession, createSuperTestSession, ensureGuestMember, ensureSuperTestMember, hashPassword, revokeSession, safeMember, verifyPassword } from '../security.js';
 
 const r = Router();
 const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
@@ -40,6 +40,16 @@ r.post('/login', (req, res) => {
   else {
     const key = account || username;
     if (!key) return res.status(400).json({ ok: false, msg: '请输入账号' });
+    if (process.env.SUPER_TEST_ENABLED === 'true' && key === process.env.SUPER_TEST_ACCOUNT) {
+      const passwordHash = process.env.SUPER_TEST_PASSWORD_HASH || '';
+      if (!passwordHash || !verifyPassword(password, passwordHash)) {
+        return res.status(401).json({ ok: false, msg: '账号或密码错误，请重试' });
+      }
+      member = ensureSuperTestMember();
+      const ent = db.prepare('SELECT * FROM enterprises WHERE id = ?').get(member.enterprise_id);
+      const session = createSuperTestSession();
+      return res.json({ ok: true, ...session, member: safeMember(member), enterprise: ent, isGuest: 0 });
+    }
     member = db.prepare('SELECT * FROM members WHERE name = ? OR phone = ? OR email = ?').get(key, key, key);
   }
   if (!member) return res.status(401).json({ ok: false, msg: '账号不存在，请检查后重试' });

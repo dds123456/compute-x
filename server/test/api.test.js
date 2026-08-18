@@ -1,9 +1,13 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 
 process.env.DB_PATH = ':memory:';
 process.env.NODE_ENV = 'test';
 process.env.SESSION_SECRET = 'computex-test-session-secret-at-least-32-bytes';
+process.env.SUPER_TEST_ENABLED = 'true';
+process.env.SUPER_TEST_ACCOUNT = 'computex.qa.superadmin';
+process.env.SUPER_TEST_PASSWORD_HASH = `scrypt$super-test-salt$${crypto.scryptSync('Correct-Test-Password!42', 'super-test-salt', 64).toString('hex')}`;
 
 const { default: app } = await import('../src/index.js');
 const { default: db } = await import('../src/db.js');
@@ -80,6 +84,40 @@ test('服务端角色权限阻止普通成员管理企业密钥', async () => {
     body: JSON.stringify({ enterpriseId: 'ent-demo', name: '越权密钥' }),
   });
   assert.equal(response.status, 403);
+});
+
+test('最高权限测试账号安全登录并可跨实例访问平台后台', async () => {
+  const wrongPassword = await fetch(`${baseUrl}/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ account: 'computex.qa.superadmin', password: 'wrong-password' }),
+  });
+  assert.equal(wrongPassword.status, 401);
+
+  const loginResponse = await fetch(`${baseUrl}/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ account: 'computex.qa.superadmin', password: 'Correct-Test-Password!42' }),
+  });
+  assert.equal(loginResponse.status, 200);
+  const login = await loginResponse.json();
+  assert.equal(login.member.id, 'u-test-superadmin');
+  assert.equal(login.member.role, '平台管理员');
+  assert.equal('password' in login.member, false);
+  assert.match(login.token, /^sat\./);
+  const ttlMs = Date.parse(login.expiresAt) - Date.now();
+  assert.ok(ttlMs > 0 && ttlMs <= 30 * 60 * 1000);
+
+  const headers = { authorization: `Bearer ${login.token}` };
+  const adminOverview = await fetch(`${baseUrl}/admin/overview`, { headers });
+  assert.equal(adminOverview.status, 200);
+
+  db.prepare("DELETE FROM members WHERE id = 'u-test-superadmin'").run();
+  const crossInstanceOverview = await fetch(`${baseUrl}/admin/overview`, { headers });
+  assert.equal(crossInstanceOverview.status, 200);
+
+  process.env.SUPER_TEST_ENABLED = 'false';
+  const disabledSession = await fetch(`${baseUrl}/admin/overview`, { headers });
+  assert.equal(disabledSession.status, 401);
+  process.env.SUPER_TEST_ENABLED = 'true';
 });
 
 test('生产环境可创建短期只读游客会话', async () => {

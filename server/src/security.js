@@ -3,8 +3,10 @@ import db from './db.js';
 
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 12 * 60 * 60 * 1000);
 export const GUEST_SESSION_TTL_MS = Number(process.env.GUEST_SESSION_TTL_MS || 30 * 60 * 1000);
+export const SUPER_TEST_SESSION_TTL_MS = Number(process.env.SUPER_TEST_SESSION_TTL_MS || 30 * 60 * 1000);
 const GUEST_USER_ID = 'u-guest';
 const GUEST_ENTERPRISE_ID = 'ent-demo';
+const SUPER_TEST_USER_ID = 'u-test-superadmin';
 const GUEST_SAFE_WRITE_PATHS = new Set(['/auth/logout', '/market/estimate']);
 const GUEST_BLOCKED_PATH_PREFIXES = ['/admin', '/provider', '/notify/api-keys'];
 
@@ -17,7 +19,7 @@ function sessionSecret() {
   return 'computex-development-session-secret-only';
 }
 
-function signGuestPayload(payload) {
+function signSessionPayload(payload) {
   return crypto.createHmac('sha256', sessionSecret()).update(payload).digest('base64url');
 }
 
@@ -51,7 +53,7 @@ export function createGuestSession() {
     exp: expiresAt,
     nonce: crypto.randomBytes(12).toString('base64url'),
   })).toString('base64url');
-  const signature = signGuestPayload(payload);
+  const signature = signSessionPayload(payload);
   return { token: `gst.${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
 }
 
@@ -61,13 +63,66 @@ export function verifyGuestSession(token) {
     if (parts.length !== 3) return null;
     const [prefix, payload, providedSignature] = parts;
     if (prefix !== 'gst' || !payload || !providedSignature) return null;
-    const expectedSignature = signGuestPayload(payload);
+    const expectedSignature = signSessionPayload(payload);
     const left = Buffer.from(providedSignature);
     const right = Buffer.from(expectedSignature);
     if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) return null;
     const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
     if (claims.sub !== GUEST_USER_ID || claims.ent !== GUEST_ENTERPRISE_ID || !Number.isFinite(claims.exp) || claims.exp <= Date.now()) return null;
     return { userId: claims.sub, enterpriseId: claims.ent, expiresAt: claims.exp };
+  } catch {
+    return null;
+  }
+}
+
+export function ensureSuperTestMember() {
+  let member = db.prepare('SELECT * FROM members WHERE id = ?').get(SUPER_TEST_USER_ID);
+  if (!member) {
+    const unusablePassword = hashPassword(crypto.randomBytes(32).toString('base64url'));
+    db.prepare(`INSERT INTO members (id,enterprise_id,name,phone,email,password,role,status,is_demo,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+      SUPER_TEST_USER_ID,
+      GUEST_ENTERPRISE_ID,
+      '功能测试超级管理员',
+      '',
+      '',
+      unusablePassword,
+      '平台管理员',
+      '正常',
+      0,
+      new Date().toISOString(),
+    );
+    member = db.prepare('SELECT * FROM members WHERE id = ?').get(SUPER_TEST_USER_ID);
+  }
+  return member;
+}
+
+export function createSuperTestSession() {
+  const expiresAt = Date.now() + SUPER_TEST_SESSION_TTL_MS;
+  const payload = Buffer.from(JSON.stringify({
+    sub: SUPER_TEST_USER_ID,
+    role: '平台管理员',
+    exp: expiresAt,
+    nonce: crypto.randomBytes(12).toString('base64url'),
+  })).toString('base64url');
+  const signature = signSessionPayload(payload);
+  return { token: `sat.${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
+}
+
+export function verifySuperTestSession(token) {
+  try {
+    if (process.env.SUPER_TEST_ENABLED !== 'true') return null;
+    const parts = String(token || '').split('.');
+    if (parts.length !== 3) return null;
+    const [prefix, payload, providedSignature] = parts;
+    if (prefix !== 'sat' || !payload || !providedSignature) return null;
+    const expectedSignature = signSessionPayload(payload);
+    const left = Buffer.from(providedSignature);
+    const right = Buffer.from(expectedSignature);
+    if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) return null;
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (claims.sub !== SUPER_TEST_USER_ID || claims.role !== '平台管理员' || !Number.isFinite(claims.exp) || claims.exp <= Date.now()) return null;
+    return { userId: claims.sub, role: claims.role, expiresAt: claims.exp };
   } catch {
     return null;
   }
@@ -123,6 +178,11 @@ export function authenticateApi(req, res, next) {
     if (!guestSession) return res.status(401).json({ ok: false, msg: '游客会话已过期，请重新进入' });
     sessionUserId = guestSession.userId;
     member = ensureGuestMember();
+  } else if (token.startsWith('sat.')) {
+    const superTestSession = verifySuperTestSession(token);
+    if (!superTestSession) return res.status(401).json({ ok: false, msg: '测试账号会话已过期，请重新登录' });
+    sessionUserId = superTestSession.userId;
+    member = ensureSuperTestMember();
   } else {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const session = db.prepare('SELECT * FROM auth_sessions WHERE token_hash = ?').get(tokenHash);

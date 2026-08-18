@@ -36,7 +36,7 @@ export default function Login() {
       localStorage.setItem('cx_enterprise', member.enterprise_id);
       localStorage.removeItem('cx_guest');
       message.success(`欢迎回来，${member.name}`);
-      go(target);
+      go(member.role === '平台管理员' ? '/admin' : target);
     } catch (e) {
       message.error(e.message);
       setLoading(false);
