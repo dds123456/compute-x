@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import db from '../db.js';
-import { now, genId } from '../utils.js';
-import { createGuestSession, createSession, hashPassword, revokeSession, safeMember, verifyPassword } from '../security.js';
+import { createGuestSession, createSession, ensureGuestMember, hashPassword, revokeSession, safeMember, verifyPassword } from '../security.js';
 
 const r = Router();
 const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
@@ -44,6 +43,7 @@ r.post('/login', (req, res) => {
     member = db.prepare('SELECT * FROM members WHERE name = ? OR phone = ? OR email = ?').get(key, key, key);
   }
   if (!member) return res.status(401).json({ ok: false, msg: '账号不存在，请检查后重试' });
+  if (member.id === 'u-guest') return res.status(403).json({ ok: false, msg: '请使用游客体验入口' });
   if (member.status === '禁用') return res.status(403).json({ ok: false, msg: '账号已禁用，请联系企业管理员' });
   if (password !== undefined && !verifyPassword(password, member.password)) {
     return res.status(401).json({ ok: false, msg: '密码错误，请重试' });
@@ -59,12 +59,7 @@ r.post('/login', (req, res) => {
 // 游客模式：无需账号密码，一键进入（只读成员身份 + 游客标记）
 r.post('/guest', (req, res) => {
   if (!allowGuestSession(req, res)) return;
-  let guest = db.prepare("SELECT * FROM members WHERE id = 'u-guest'").get();
-  if (!guest) {
-    db.prepare(`INSERT INTO members (id,enterprise_id,name,phone,email,password,role,status,is_demo,created_at) VALUES ('u-guest','ent-demo','游客体验账号','18800000000','guest@computex.demo','guest123','只读成员','正常',1,?)`)
-      .run(now());
-    guest = db.prepare("SELECT * FROM members WHERE id = 'u-guest'").get();
-  }
+  const guest = ensureGuestMember();
   const ent = db.prepare('SELECT * FROM enterprises WHERE id = ?').get(guest.enterprise_id);
   const session = createGuestSession();
   res.json({ ok: true, ...session, member: { ...safeMember(guest), is_guest: 1 }, enterprise: ent, isGuest: 1 });

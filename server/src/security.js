@@ -21,6 +21,28 @@ function signGuestPayload(payload) {
   return crypto.createHmac('sha256', sessionSecret()).update(payload).digest('base64url');
 }
 
+export function ensureGuestMember() {
+  let member = db.prepare('SELECT * FROM members WHERE id = ?').get(GUEST_USER_ID);
+  if (!member) {
+    const unusablePassword = hashPassword(crypto.randomBytes(32).toString('base64url'));
+    db.prepare(`INSERT INTO members (id,enterprise_id,name,phone,email,password,role,status,is_demo,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+      GUEST_USER_ID,
+      GUEST_ENTERPRISE_ID,
+      '游客体验账号',
+      '',
+      '',
+      unusablePassword,
+      '只读成员',
+      '正常',
+      1,
+      new Date().toISOString(),
+    );
+    member = db.prepare('SELECT * FROM members WHERE id = ?').get(GUEST_USER_ID);
+  }
+  return member;
+}
+
 export function createGuestSession() {
   const expiresAt = Date.now() + GUEST_SESSION_TTL_MS;
   const payload = Buffer.from(JSON.stringify({
@@ -95,10 +117,12 @@ export function authenticateApi(req, res, next) {
   if (!token) return res.status(401).json({ ok: false, msg: '登录已过期，请重新登录' });
 
   let sessionUserId;
+  let member;
   if (token.startsWith('gst.')) {
     const guestSession = verifyGuestSession(token);
     if (!guestSession) return res.status(401).json({ ok: false, msg: '游客会话已过期，请重新进入' });
     sessionUserId = guestSession.userId;
+    member = ensureGuestMember();
   } else {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const session = db.prepare('SELECT * FROM auth_sessions WHERE token_hash = ?').get(tokenHash);
@@ -107,9 +131,9 @@ export function authenticateApi(req, res, next) {
       return res.status(401).json({ ok: false, msg: '登录已过期，请重新登录' });
     }
     sessionUserId = session.user_id;
+    member = db.prepare('SELECT * FROM members WHERE id = ?').get(sessionUserId);
   }
 
-  const member = db.prepare('SELECT * FROM members WHERE id = ?').get(sessionUserId);
   if (!member || member.status === '禁用') {
     return res.status(403).json({ ok: false, msg: '账号已禁用或不存在' });
   }

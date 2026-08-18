@@ -6,6 +6,7 @@ process.env.NODE_ENV = 'test';
 process.env.SESSION_SECRET = 'computex-test-session-secret-at-least-32-bytes';
 
 const { default: app } = await import('../src/index.js');
+const { default: db } = await import('../src/db.js');
 const { createGuestSession, verifyGuestSession } = await import('../src/security.js');
 let server;
 let baseUrl;
@@ -98,6 +99,12 @@ test('生产环境可创建短期只读游客会话', async () => {
     const ttlMs = Date.parse(guest.expiresAt) - Date.now();
     assert.ok(ttlMs > 0);
     assert.ok(ttlMs <= 30 * 60 * 1000);
+
+    const passwordLogin = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ account: '游客体验账号', password: 'guest123' }),
+    });
+    assert.equal(passwordLogin.status, 403);
   } finally {
     process.env.NODE_ENV = previousNodeEnv;
   }
@@ -112,6 +119,20 @@ test('游客令牌可跨实例验证且拒绝篡改', () => {
 
   const tampered = `${session.token.slice(0, -1)}${session.token.endsWith('a') ? 'b' : 'a'}`;
   assert.equal(verifyGuestSession(tampered), null);
+});
+
+test('游客令牌在无本地游客记录的新实例中自动恢复只读身份', async () => {
+  const session = createGuestSession();
+  db.prepare("DELETE FROM members WHERE id = 'u-guest'").run();
+
+  const response = await fetch(`${baseUrl}/auth/me`, {
+    headers: { authorization: `Bearer ${session.token}` },
+  });
+  assert.equal(response.status, 200);
+  const me = await response.json();
+  assert.equal(me.member.id, 'u-guest');
+  assert.equal(me.member.enterprise_id, 'ent-demo');
+  assert.equal(me.member.role, '只读成员');
 });
 
 test('游客会话被锁定在演示租户且无法写入或访问敏感域', async () => {
