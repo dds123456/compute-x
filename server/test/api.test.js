@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 
 process.env.DB_PATH = ':memory:';
 process.env.NODE_ENV = 'test';
+process.env.SESSION_SECRET = 'computex-test-session-secret-at-least-32-bytes';
 
 const { default: app } = await import('../src/index.js');
+const { createGuestSession, verifyGuestSession } = await import('../src/security.js');
 let server;
 let baseUrl;
 
@@ -99,6 +101,17 @@ test('生产环境可创建短期只读游客会话', async () => {
   } finally {
     process.env.NODE_ENV = previousNodeEnv;
   }
+});
+
+test('游客令牌可跨实例验证且拒绝篡改', () => {
+  const session = createGuestSession();
+  const claims = verifyGuestSession(session.token);
+  assert.equal(claims.userId, 'u-guest');
+  assert.equal(claims.enterpriseId, 'ent-demo');
+  assert.ok(claims.expiresAt > Date.now());
+
+  const tampered = `${session.token.slice(0, -1)}${session.token.endsWith('a') ? 'b' : 'a'}`;
+  assert.equal(verifyGuestSession(tampered), null);
 });
 
 test('游客会话被锁定在演示租户且无法写入或访问敏感域', async () => {

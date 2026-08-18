@@ -8,6 +8,49 @@ const GUEST_ENTERPRISE_ID = 'ent-demo';
 const GUEST_SAFE_WRITE_PATHS = new Set(['/auth/logout', '/market/estimate']);
 const GUEST_BLOCKED_PATH_PREFIXES = ['/admin', '/provider', '/notify/api-keys'];
 
+function sessionSecret() {
+  const secret = process.env.SESSION_SECRET || '';
+  if (secret.length >= 32) return secret;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('SESSION_SECRET must contain at least 32 characters in production.');
+  }
+  return 'computex-development-session-secret-only';
+}
+
+function signGuestPayload(payload) {
+  return crypto.createHmac('sha256', sessionSecret()).update(payload).digest('base64url');
+}
+
+export function createGuestSession() {
+  const expiresAt = Date.now() + GUEST_SESSION_TTL_MS;
+  const payload = Buffer.from(JSON.stringify({
+    sub: GUEST_USER_ID,
+    ent: GUEST_ENTERPRISE_ID,
+    exp: expiresAt,
+    nonce: crypto.randomBytes(12).toString('base64url'),
+  })).toString('base64url');
+  const signature = signGuestPayload(payload);
+  return { token: `gst.${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
+}
+
+export function verifyGuestSession(token) {
+  try {
+    const parts = String(token || '').split('.');
+    if (parts.length !== 3) return null;
+    const [prefix, payload, providedSignature] = parts;
+    if (prefix !== 'gst' || !payload || !providedSignature) return null;
+    const expectedSignature = signGuestPayload(payload);
+    const left = Buffer.from(providedSignature);
+    const right = Buffer.from(expectedSignature);
+    if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) return null;
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (claims.sub !== GUEST_USER_ID || claims.ent !== GUEST_ENTERPRISE_ID || !Number.isFinite(claims.exp) || claims.exp <= Date.now()) return null;
+    return { userId: claims.sub, enterpriseId: claims.ent, expiresAt: claims.exp };
+  } catch {
+    return null;
+  }
+}
+
 export function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const derived = crypto.scryptSync(String(password), salt, 64).toString('hex');
   return `scrypt$${salt}$${derived}`;
@@ -38,6 +81,7 @@ export function createSession(userId, ttlMs = SESSION_TTL_MS) {
 
 export function revokeSession(token) {
   if (!token) return;
+  if (token.startsWith('gst.')) return;
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(tokenHash);
 }
@@ -50,14 +94,22 @@ export function authenticateApi(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
   if (!token) return res.status(401).json({ ok: false, msg: '登录已过期，请重新登录' });
 
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const session = db.prepare('SELECT * FROM auth_sessions WHERE token_hash = ?').get(tokenHash);
-  if (!session || Date.parse(session.expires_at) <= Date.now()) {
-    if (session) db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(tokenHash);
-    return res.status(401).json({ ok: false, msg: '登录已过期，请重新登录' });
+  let sessionUserId;
+  if (token.startsWith('gst.')) {
+    const guestSession = verifyGuestSession(token);
+    if (!guestSession) return res.status(401).json({ ok: false, msg: '游客会话已过期，请重新进入' });
+    sessionUserId = guestSession.userId;
+  } else {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const session = db.prepare('SELECT * FROM auth_sessions WHERE token_hash = ?').get(tokenHash);
+    if (!session || Date.parse(session.expires_at) <= Date.now()) {
+      if (session) db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(tokenHash);
+      return res.status(401).json({ ok: false, msg: '登录已过期，请重新登录' });
+    }
+    sessionUserId = session.user_id;
   }
 
-  const member = db.prepare('SELECT * FROM members WHERE id = ?').get(session.user_id);
+  const member = db.prepare('SELECT * FROM members WHERE id = ?').get(sessionUserId);
   if (!member || member.status === '禁用') {
     return res.status(403).json({ ok: false, msg: '账号已禁用或不存在' });
   }

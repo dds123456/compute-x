@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import db from '../db.js';
 import { now, genId } from '../utils.js';
-import { createSession, GUEST_SESSION_TTL_MS, hashPassword, revokeSession, safeMember, verifyPassword } from '../security.js';
+import { createGuestSession, createSession, hashPassword, revokeSession, safeMember, verifyPassword } from '../security.js';
 
 const r = Router();
 const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
@@ -66,7 +66,7 @@ r.post('/guest', (req, res) => {
     guest = db.prepare("SELECT * FROM members WHERE id = 'u-guest'").get();
   }
   const ent = db.prepare('SELECT * FROM enterprises WHERE id = ?').get(guest.enterprise_id);
-  const session = createSession(guest.id, GUEST_SESSION_TTL_MS);
+  const session = createGuestSession();
   res.json({ ok: true, ...session, member: { ...safeMember(guest), is_guest: 1 }, enterprise: ent, isGuest: 1 });
 });
 
