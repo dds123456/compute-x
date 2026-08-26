@@ -17,7 +17,7 @@ cd compute-x/web
 npm run dev
 ```
 
-浏览器访问 **http://localhost:5173**
+在线访问地址 **https://compute-x-zeta.vercel.app/console**
 
 生产环境提供 30 分钟、无密码、只读、租户锁定的游客会话；游客不能支付、审批、访问密钥或修改数据。生产部署、外部依赖和上线门禁见 [PRODUCTION_READINESS.md](./PRODUCTION_READINESS.md)。
 
@@ -31,14 +31,6 @@ docker run --env-file .env -p 8787:8787 -v computex-data:/data computex:latest
 
 访问 `http://localhost:8787`，健康检查为 `GET /api/health`。
 
-## 开发环境角色账号（初始密码均为 123456）
-
-| 端 | 账号 | 角色 |
-| --- | --- | --- |
-| Web 需求方控制台 | 陈远 / 林财务 / 王项目 / 李算法 / 赵只读 | 企业管理员 / 财务 / 项目负责人 / 工程师 / 只读 |
-| 资源方后台 | 华东智算中心（一键进入） | 资源方运营 |
-| 平台管理后台 | 平台运营中心（一键进入） | 平台运营 |
-| 移动端 App | 任意成员一键进入 | 轻量协同 |
 
 ## 功能覆盖（对照 PRD）
 
