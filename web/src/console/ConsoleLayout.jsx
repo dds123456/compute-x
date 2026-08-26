@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
-import { Layout, Menu, Badge, Dropdown, Avatar, Input, Select, Button, Space, Tag, message, Tooltip, Alert, Drawer, Modal, List, Empty } from 'antd';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { Layout, Menu, Badge, Dropdown, Avatar, Input, Select, Button, Space, Tag, message, Tooltip, Alert, Drawer, Modal, List, Empty, Spin } from 'antd';
 import {
   DashboardOutlined, ShoppingOutlined, CloudServerOutlined, FileTextOutlined, TeamOutlined,
   BellOutlined, QuestionCircleOutlined, UserOutlined, ThunderboltOutlined, ProjectOutlined,
   AuditOutlined, MessageOutlined, SettingOutlined, AppstoreOutlined, MobileOutlined, RocketOutlined,
-  MenuOutlined, SearchOutlined,
+  MenuOutlined, SearchOutlined, BulbOutlined, FundOutlined,
 } from '@ant-design/icons';
-import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation, Navigate, Link } from 'react-router-dom';
 import api from '../api.js';
 import Dashboard from './Dashboard.jsx';
 import Market from './Market.jsx';
@@ -24,6 +24,9 @@ import Tickets from './Tickets.jsx';
 import TicketDetail from './TicketDetail.jsx';
 import Messages from './Messages.jsx';
 import Settings from './Settings.jsx';
+
+const Advisor = lazy(() => import('./Advisor.jsx'));
+const FinOps = lazy(() => import('./FinOps.jsx'));
 
 const { Sider, Header, Content } = Layout;
 
@@ -46,6 +49,7 @@ export default function ConsoleLayout() {
     api.get('/auth/projects').then(({ projects }) => setProjects(projects));
     api.get('/auth/unread').then(({ count }) => setUnread(count));
   }, []);
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }); }, [loc.pathname]);
 
   const clearSession = () => {
     ['cx_token', 'cx_uid', 'cx_enterprise', 'cx_guest', 'cx_provider'].forEach(k => localStorage.removeItem(k));
@@ -68,6 +72,7 @@ export default function ConsoleLayout() {
 
   const menuItems = [
     { key: '/console', icon: <DashboardOutlined />, label: '概览' },
+    { key: '/console/advisor', icon: <BulbOutlined />, label: 'AI 决策中心' },
     {
       key: 'market', icon: <ShoppingOutlined />, label: '资源市场',
       children: [
@@ -88,6 +93,7 @@ export default function ConsoleLayout() {
       children: [
         { key: '/console/bills', label: '账单列表' },
         { key: '/console/invoices', label: '发票管理' },
+        { key: '/console/finops', icon: <FundOutlined />, label: 'FinOps 控制台' },
       ],
     },
     {
@@ -104,10 +110,12 @@ export default function ConsoleLayout() {
   ];
 
   const selected = menuItems.flatMap(m => m.children ? m.children.map(c => c.key) : [m.key])
-    .filter(k => loc.pathname.startsWith(k))[0] || '/console';
+    .filter(k => loc.pathname === k || loc.pathname.startsWith(`${k}/`))
+    .sort((a, b) => b.length - a.length)[0] || '/console';
 
   return (
     <Layout className="cx-shell" style={{ minHeight: '100vh' }}>
+      <a className="cx-skip-link" href="#cx-main">跳至主内容</a>
       <Sider className="cx-sider" width={228} theme="dark">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 16px 14px' }}>
           <div style={{ width: 34, height: 34, borderRadius: 8, background: 'linear-gradient(135deg,#2f54eb,#13c2c2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>
@@ -131,9 +139,9 @@ export default function ConsoleLayout() {
             <Select className="cx-header-project" value={projId} onChange={setProjId} style={{ width: 170 }} options={[{ value: '全部', label: '全部项目' }, ...projects.map(p => ({ value: p.id, label: p.name }))]} />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
-            <Tooltip title="帮助文档"><QuestionCircleOutlined style={{ fontSize: 16, color: '#7a8699', cursor: 'pointer' }} /></Tooltip>
+            <Tooltip title="帮助与支持"><Button type="text" aria-label="打开帮助与支持" icon={<QuestionCircleOutlined />} onClick={() => nav('/console/tickets')} /></Tooltip>
             <Badge count={unread} size="small">
-              <BellOutlined style={{ fontSize: 16, color: '#1f2d3d', cursor: 'pointer' }} onClick={() => nav('/console/messages')} />
+              <Button type="text" aria-label={`打开消息中心，${unread} 条未读`} icon={<BellOutlined />} onClick={() => nav('/console/messages')} />
             </Badge>
             <Dropdown menu={{
               items: [
@@ -157,7 +165,7 @@ export default function ConsoleLayout() {
             </Dropdown>
           </div>
         </Header>
-        <Content className="cx-content">
+        <Content className="cx-content" id="cx-main" tabIndex={-1}>
           {isGuest && (
             <Alert
               style={{ marginBottom: 16 }}
@@ -175,6 +183,8 @@ export default function ConsoleLayout() {
             <Route path="market/:id" element={<ResourceDetail />} />
             <Route path="compare" element={<Market compare />} />
             <Route path="estimator" element={<Estimator />} />
+            <Route path="advisor" element={<Suspense fallback={<Spin style={{ display: 'block', margin: 80 }} />}><Advisor /></Suspense>} />
+            <Route path="finops" element={<Suspense fallback={<Spin style={{ display: 'block', margin: 80 }} />}><FinOps projId={projId} /></Suspense>} />
             <Route path="instances" element={<Instances projId={projId} />} />
             <Route path="instances/create" element={<InstanceCreate />} />
             <Route path="instances/:id" element={<InstanceDetail />} />
@@ -198,9 +208,7 @@ export default function ConsoleLayout() {
       </Drawer>
       <Modal title="全局搜索" open={searchOpen} onCancel={() => setSearchOpen(false)} footer={null} width={640}>
         {searchResults.length ? <List dataSource={searchResults} renderItem={item => (
-          <List.Item style={{ cursor: 'pointer' }} onClick={() => { nav(item.path); setSearchOpen(false); }}>
-            <List.Item.Meta avatar={<Tag color={item.type === '实例' ? 'cyan' : item.type === '账单' ? 'gold' : item.type === '工单' ? 'purple' : 'green'}>{item.type}</Tag>} title={item.title} description={item.subtitle} />
-          </List.Item>
+          <List.Item><Link className="cx-search-result" to={item.path} onClick={() => setSearchOpen(false)}><List.Item.Meta avatar={<Tag color={item.type === '实例' ? 'cyan' : item.type === '账单' ? 'gold' : item.type === '工单' ? 'purple' : 'green'}>{item.type}</Tag>} title={item.title} description={item.subtitle} /></Link></List.Item>
         )} /> : <Empty description={searching ? '正在搜索…' : '没有找到匹配结果'} />}
       </Modal>
     </Layout>

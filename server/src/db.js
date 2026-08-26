@@ -274,12 +274,162 @@ CREATE TABLE IF NOT EXISTS notification_preferences (
   marketing INTEGER DEFAULT 0,
   updated_at TEXT DEFAULT (datetime('now','localtime'))
 );
+CREATE TABLE IF NOT EXISTS workload_intents (
+  id TEXT PRIMARY KEY,
+  enterprise_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  workload_type TEXT NOT NULL,
+  model_name TEXT,
+  model_size_b REAL NOT NULL,
+  data_size_gb REAL NOT NULL,
+  deadline_hours REAL NOT NULL,
+  budget REAL NOT NULL,
+  region TEXT,
+  compliance_json TEXT DEFAULT '[]',
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_workload_intents_tenant_created ON workload_intents(enterprise_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS recommendations (
+  id TEXT PRIMARY KEY,
+  intent_id TEXT NOT NULL REFERENCES workload_intents(id),
+  enterprise_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  engine TEXT NOT NULL,
+  model_id TEXT,
+  status TEXT NOT NULL DEFAULT '已生成',
+  plans_json TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_recommendations_tenant_created ON recommendations(enterprise_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS order_drafts (
+  id TEXT PRIMARY KEY,
+  recommendation_id TEXT NOT NULL REFERENCES recommendations(id),
+  plan_id TEXT NOT NULL,
+  enterprise_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  project_id TEXT,
+  resource_id TEXT NOT NULL REFERENCES resources(id),
+  quantity INTEGER NOT NULL,
+  duration_hours REAL NOT NULL,
+  amount REAL NOT NULL,
+  quote_json TEXT NOT NULL,
+  order_id TEXT,
+  status TEXT NOT NULL DEFAULT '草稿',
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_order_drafts_tenant_status ON order_drafts(enterprise_id, status, created_at DESC);
+CREATE TABLE IF NOT EXISTS usage_records (
+  id TEXT PRIMARY KEY,
+  enterprise_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  instance_id TEXT NOT NULL REFERENCES instances(id),
+  usage_date TEXT NOT NULL,
+  gpu_hours REAL NOT NULL CHECK (gpu_hours >= 0),
+  gpu_utilization REAL NOT NULL CHECK (gpu_utilization >= 0 AND gpu_utilization <= 100),
+  cost REAL NOT NULL CHECK (cost >= 0),
+  carbon_kg REAL NOT NULL DEFAULT 0 CHECK (carbon_kg >= 0),
+  source TEXT NOT NULL DEFAULT 'provider-metering',
+  ingested_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_instance_date ON usage_records(instance_id, usage_date);
+CREATE INDEX IF NOT EXISTS idx_usage_tenant_date_project ON usage_records(enterprise_id, usage_date, project_id);
+CREATE TABLE IF NOT EXISTS approval_policies (
+  id TEXT PRIMARY KEY,
+  enterprise_id TEXT NOT NULL,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  name TEXT NOT NULL,
+  min_amount REAL NOT NULL DEFAULT 0 CHECK (min_amount >= 0),
+  steps_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT '启用',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_approval_policies_tenant_project ON approval_policies(enterprise_id, project_id, status);
+CREATE TABLE IF NOT EXISTS approval_requests_v3 (
+  id TEXT PRIMARY KEY,
+  enterprise_id TEXT NOT NULL,
+  draft_id TEXT NOT NULL REFERENCES order_drafts(id),
+  policy_id TEXT REFERENCES approval_policies(id),
+  applicant_id TEXT NOT NULL,
+  amount REAL NOT NULL CHECK (amount >= 0),
+  status TEXT NOT NULL DEFAULT '待审批',
+  current_step INTEGER NOT NULL DEFAULT 1,
+  submitted_at TEXT NOT NULL,
+  decided_at TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_request_active_draft ON approval_requests_v3(draft_id) WHERE status = '待审批';
+CREATE INDEX IF NOT EXISTS idx_approval_requests_tenant_status ON approval_requests_v3(enterprise_id, status, submitted_at DESC);
+CREATE TABLE IF NOT EXISTS approval_request_steps (
+  id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES approval_requests_v3(id) ON DELETE CASCADE,
+  step_no INTEGER NOT NULL CHECK (step_no > 0),
+  approver_id TEXT NOT NULL REFERENCES members(id),
+  status TEXT NOT NULL DEFAULT '等待中',
+  comment TEXT,
+  decided_at TEXT,
+  UNIQUE(request_id, step_no)
+);
+CREATE INDEX IF NOT EXISTS idx_approval_steps_approver_status ON approval_request_steps(approver_id, status, request_id);
 `);
+
+function ensureColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some(item => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+ensureColumn('order_drafts', 'order_id', 'TEXT');
 
 const count = (t) => db.prepare(`SELECT COUNT(*) c FROM ${t}`).get().c;
 
 // ============ 种子数据 ============
 if (count('enterprises') === 0) seed();
+if (count('usage_records') === 0) seedUsageRecords();
+if (count('approval_policies') === 0) seedApprovalPolicies();
+
+function seedApprovalPolicies() {
+  const insert = db.prepare(`INSERT INTO approval_policies
+    (id,enterprise_id,project_id,name,min_amount,steps_json,status,version,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  const createdAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  db.prepare('SELECT id, enterprise_id, name, approval_rule FROM projects').all().forEach(project => {
+    const rule = JSON.parse(project.approval_rule || '{}');
+    const approvers = Array.isArray(rule.approvers) ? rule.approvers : [];
+    if (!approvers.length) return;
+    insert.run(
+      `policy-${project.id}`, project.enterprise_id, project.id, `${project.name}采购审批`,
+      Number(rule.threshold || 0), JSON.stringify(approvers.map((approverId, index) => ({ stepNo: index + 1, approverId }))),
+      '启用', 1, createdAt, createdAt,
+    );
+  });
+}
+
+function seedUsageRecords() {
+  const insert = db.prepare(`INSERT INTO usage_records
+    (id,enterprise_id,project_id,instance_id,usage_date,gpu_hours,gpu_utilization,cost,carbon_kg,source,ingested_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+  const profiles = [
+    ['ins-001', 'ent-demo', 'p-llm', 24, 78, 864],
+    ['ins-002', 'ent-demo', 'p-llm', 24, 64, 864],
+    ['ins-003', 'ent-demo', 'p-infer', 24, 48, 1500],
+    ['ins-004', 'ent-demo', 'p-render', 10, 14, 60],
+    ['ins-007', 'ent-demo', 'p-infer', 8, 9, 176],
+    ['ins-005', 'ent-lab', 'p-paper', 24, 72, 288],
+  ];
+  const days = ['2026-08-18', '2026-08-19', '2026-08-20', '2026-08-21', '2026-08-22', '2026-08-23', '2026-08-24'];
+  profiles.forEach((profile, profileIndex) => {
+    days.forEach((day, dayIndex) => {
+      const [instanceId, enterpriseId, projectId, gpuHours, utilization, cost] = profile;
+      const adjustedUtilization = Math.max(0, Math.min(100, utilization + ((dayIndex % 3) - 1) * 3));
+      insert.run(
+        `usage-${profileIndex + 1}-${dayIndex + 1}`, enterpriseId, projectId, instanceId, day,
+        gpuHours, adjustedUtilization, cost, Number((gpuHours * 0.31).toFixed(2)),
+        'provider-metering', `${day} 23:55:00`,
+      );
+    });
+  });
+}
 
 function seed() {
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ');

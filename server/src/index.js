@@ -16,6 +16,9 @@ import notifications from './routes/notifications.js';
 import provider from './routes/provider.js';
 import admin from './routes/admin.js';
 import dashboard from './routes/dashboard.js';
+import advisor from './routes/advisor.js';
+import finops from './routes/finops.js';
+import approvalsV3 from './routes/approvals-v3.js';
 import { authenticateApi } from './security.js';
 
 const app = express();
@@ -50,6 +53,9 @@ app.use('/api/notify', notifications);
 app.use('/api/provider', provider);
 app.use('/api/admin', admin);
 app.use('/api/dashboard', dashboard);
+app.use('/api/advisor', advisor);
+app.use('/api/finops', finops);
+app.use('/api/approvals-v3', approvalsV3);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'ComputeX API', time: new Date().toISOString() }));
 
