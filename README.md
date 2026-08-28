@@ -116,7 +116,7 @@ ComputeX 是一款面向**企业 GPU 算力采购与治理**的演示/基线产�
 双击 停止ComputeX.cmd    :: 停止服务
 ```
 
-本地访问 **http://localhost:5173**；生产环境访问 **https://compute-x-zeta.vercel.app/console**。
+浏览器访问 **http://localhost:5173**。
 
 ### 方式二：手动启动
 
@@ -130,8 +130,6 @@ cd compute-x/web
 npm run dev
 ```
 
-生产环境提供 30 分钟、无密码、只读、租户锁定的游客会话；游客不能支付、审批、访问密钥或修改数据。生产部署、外部依赖和上线门禁见 [PRODUCTION_READINESS.md](./PRODUCTION_READINESS.md)。
-
 ### 方式三：Docker
 
 ```bash
@@ -143,9 +141,7 @@ docker run --env-file .env -p 8787:8787 -v computex-data:/data computex:latest
 
 ---
 
-## 👥 本地开发演示账号
-
-以下账号仅供本地开发环境使用，生产环境不会开放账号枚举或后台一键登录。线上体验请使用 30 分钟、只读、租户锁定的游客入口。
+## 👥 演示账号
 
 | 端 | 账号 | 角色 | 说明 |
 | --- | --- | --- | --- |
