@@ -44,6 +44,31 @@ r.get('/overview', (req, res) => {
     level: project.budgetUsedRate >= 90 ? '高' : project.budgetUsedRate >= 75 ? '中' : '低',
     value: project.budgetUsedRate, unit: '%', message: `${project.projectName} 预算暴露 ${project.budgetUsedRate}%`,
   }));
+  opportunities.slice(0, 3).forEach(item => guardrails.push({
+    code: 'IDLE_POLICY', instanceId: item.instanceId, instanceName: item.instanceName,
+    level: item.utilization < 10 ? '高' : '中', value: item.utilization, unit: '%',
+    message: `${item.instanceName} 平均利用率 ${item.utilization}%，建议停止或降配`,
+  }));
+
+  // 环比：与上一等长窗口成本对比
+  const prevStart = new Date(cutoff);
+  prevStart.setUTCDate(prevStart.getUTCDate() - windowDays);
+  const prevStartDate = prevStart.toISOString().slice(0, 10);
+  const prevWhere = `enterprise_id = ? AND usage_date >= ? AND usage_date < ?${projectId ? ' AND project_id = ?' : ''}`;
+  const prevParams = projectId ? [enterpriseId, prevStartDate, cutoffDate, projectId] : [enterpriseId, prevStartDate, cutoffDate];
+  const prevCost = db.prepare(`SELECT SUM(cost) c FROM usage_records WHERE ${prevWhere}`).get(...prevParams).c || 0;
+  const monthOverMonth = prevCost > 0 ? round(((totalCost - prevCost) / prevCost) * 100, 1) : null;
+
+  // 按 GPU 型号 / 资源方维度
+  const whereAliased = `u.enterprise_id = ? AND u.usage_date >= ?${projectId ? ' AND u.project_id = ?' : ''}`;
+  const byGpuModel = db.prepare(`SELECT i.gpu_model gpu_model, SUM(u.cost) cost, AVG(u.gpu_utilization) utilization
+    FROM usage_records u JOIN instances i ON i.id = u.instance_id WHERE ${whereAliased}
+    GROUP BY i.gpu_model ORDER BY cost DESC`).all(...params)
+    .map(row => ({ gpuModel: row.gpu_model, cost: round(row.cost), utilization: round(row.utilization, 1) }));
+  const byProvider = db.prepare(`SELECT i.provider_id provider_id, p.name provider_name, SUM(u.cost) cost, AVG(u.gpu_utilization) utilization
+    FROM usage_records u JOIN instances i ON i.id = u.instance_id LEFT JOIN providers p ON p.id = i.provider_id WHERE ${whereAliased}
+    GROUP BY i.provider_id, p.name ORDER BY cost DESC`).all(...params)
+    .map(row => ({ providerId: row.provider_id, providerName: row.provider_name || '未知资源方', cost: round(row.cost), utilization: round(row.utilization, 1) }));
 
   res.json({
     ok: true,
@@ -54,8 +79,10 @@ r.get('/overview', (req, res) => {
       idleCost: { label: '闲置成本', value: idleCost, unit: 'CNY', definition: 'GPU 利用率低于 20% 的用量成本' },
       forecastMonthCost: { label: '月度成本预测', value: forecastMonthCost, unit: 'CNY', definition: '窗口日均成本 × 30' },
       savingsPotential: { label: '可优化金额', value: round(opportunities.reduce((sum, item) => sum + item.estimatedSavings, 0)), unit: 'CNY', definition: '低利用率实例按 65% 可回收成本估算' },
+      carbonKg: { label: '碳排放', value: round(summary.carbon_kg, 1), unit: 'kgCO₂e', definition: '窗口内用量记录的碳排之和' },
+      monthOverMonth: { label: '成本环比', value: monthOverMonth, unit: '%', definition: '与上一等长窗口成本相比的变化率' },
     },
-    trend, projectBreakdown, opportunities, guardrails,
+    trend, projectBreakdown, byGpuModel, byProvider, opportunities, guardrails,
     source: { grain: '实例 × 自然日', provider: 'provider-metering', latestAt: latest.latest_at, observedDays: summary.observed_days, recordsScope: '当前企业及筛选项目', refreshPolicy: '每日 23:55 汇总' },
   });
 });

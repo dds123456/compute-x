@@ -75,6 +75,21 @@ export function verifyGuestSession(token) {
   }
 }
 
+// 后台演示账号（平台管理员 / 资源方运营），供后台一键进入使用
+export function ensureBackendMember(role) {
+  const id = role === '平台管理员' ? 'u-admin-platform' : 'u-provider-operator';
+  let member = db.prepare('SELECT * FROM members WHERE id = ?').get(id);
+  if (!member) {
+    db.prepare(`INSERT INTO members (id,enterprise_id,name,phone,email,password,role,status,is_demo,created_at)
+      VALUES (?,?,?,?,?,?,?,?,1,?)`).run(
+      id, '', role === '平台管理员' ? '平台运营中心' : '华东智算中心运营', '', '',
+      hashPassword(crypto.randomBytes(16).toString('base64url')), role, '正常', new Date().toISOString(),
+    );
+    member = db.prepare('SELECT * FROM members WHERE id = ?').get(id);
+  }
+  return member;
+}
+
 export function ensureSuperTestMember() {
   let member = db.prepare('SELECT * FROM members WHERE id = ?').get(SUPER_TEST_USER_ID);
   if (!member) {
@@ -164,7 +179,7 @@ export function revokeSession(token) {
 }
 
 export function authenticateApi(req, res, next) {
-  const publicRoute = req.path === '/health' || req.path === '/auth/login' || req.path === '/auth/guest';
+  const publicRoute = req.path === '/health' || req.path === '/auth/login' || req.path === '/auth/guest' || req.path === '/auth/backend';
   if (publicRoute || req.method === 'OPTIONS') return next();
 
   const header = req.headers.authorization || '';
@@ -241,3 +256,30 @@ export function requireRoles(...roles) {
     return res.status(403).json({ ok: false, msg: '当前角色无权执行该操作' });
   };
 }
+
+// 进程内通用限流器（默认内存 Map，可通过替换 createRateLimiter 注入 Redis 等外部存储实现可插拔）
+export function createRateLimiter({ windowMs = 10 * 60 * 1000, max = 60, keyPrefix = 'rl' } = {}) {
+  const buckets = new Map();
+  return function rateLimit(req, res, next) {
+    const forwarded = String(req.headers['x-forwarded-for'] || '');
+    const ip = forwarded.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+    const key = `${keyPrefix}:${ip}`;
+    const nowMs = Date.now();
+    let bucket = buckets.get(key);
+    if (!bucket || bucket.resetAt <= nowMs) {
+      bucket = { count: 0, resetAt: nowMs + windowMs };
+      buckets.set(key, bucket);
+    }
+    res.setHeader('X-RateLimit-Limit', String(max));
+    res.setHeader('X-RateLimit-Remaining', String(Math.max(0, max - bucket.count - 1)));
+    if (bucket.count >= max) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((bucket.resetAt - nowMs) / 1000))));
+      return res.status(429).json({ ok: false, msg: '操作过于频繁，请稍后再试' });
+    }
+    bucket.count += 1;
+    next();
+  };
+}
+
+// 登录/游客身份常量（供测试与路由复用）
+export const TENANT_ROLES = ['平台管理员', '资源方运营'];

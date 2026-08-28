@@ -69,18 +69,18 @@ export default function Login() {
       setLoading(true);
       await doLogin({ userId: acc.userId }, '/console');
     } else if (acc.type === 'provider') {
-      const { member, token } = await api.post('/auth/guest');
+      const { member, token } = await api.post('/auth/backend', { role: '资源方运营' });
       localStorage.setItem('cx_token', token);
       localStorage.setItem('cx_uid', member.id);
-      localStorage.setItem('cx_enterprise', member.enterprise_id);
+      localStorage.setItem('cx_enterprise', member.enterprise_id || '');
       localStorage.setItem('cx_provider', acc.providerId);
       message.success(`已进入${acc.name}（资源方后台）`);
       go('/provider');
     } else {
-      const { member, token } = await api.post('/auth/guest');
+      const { member, token } = await api.post('/auth/backend', { role: '平台管理员' });
       localStorage.setItem('cx_token', token);
       localStorage.setItem('cx_uid', member.id);
-      localStorage.setItem('cx_enterprise', member.enterprise_id);
+      localStorage.setItem('cx_enterprise', member.enterprise_id || '');
       message.success('已进入平台管理后台');
       go('/admin');
     }

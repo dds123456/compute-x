@@ -19,13 +19,19 @@ r.get('/notifications', (req, res) => {
 
 // 标记已读
 r.post('/notifications/read', (req, res) => {
-  const { ids, userId, all } = req.body || {};
+  const { ids, all } = req.body || {};
   if (all) {
-    db.prepare('UPDATE notifications SET is_read=1 WHERE user_id=?').run(userId);
+    db.prepare('UPDATE notifications SET is_read=1 WHERE user_id=?').run(req.auth.userId);
   } else if (ids?.length) {
-    db.prepare(`UPDATE notifications SET is_read=1 WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+    db.prepare(`UPDATE notifications SET is_read=1 WHERE id IN (${ids.map(() => '?').join(',')}) AND user_id = ?`).run(...ids, req.auth.userId);
   }
   res.json({ ok: true });
+});
+
+// 告警列表（本企业实例的近期告警，供移动端告警动态）
+r.get('/alerts', (req, res) => {
+  const rows = db.prepare(`SELECT a.*, i.name instance_name FROM alerts a JOIN instances i ON a.instance_id = i.id WHERE i.enterprise_id = ? ORDER BY datetime(a.triggered_at) DESC LIMIT 5`).all(req.auth.enterpriseId);
+  res.json({ ok: true, alerts: rows });
 });
 
 // API 密钥

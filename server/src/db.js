@@ -258,6 +258,54 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   type TEXT DEFAULT '降价提醒',
   created_at TEXT DEFAULT (datetime('now','localtime'))
 );
+CREATE TABLE IF NOT EXISTS instance_metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  instance_id TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  gpu REAL,
+  vram REAL,
+  cpu REAL,
+  mem REAL
+);
+CREATE INDEX IF NOT EXISTS idx_metrics_instance_ts ON instance_metrics(instance_id, ts);
+CREATE TABLE IF NOT EXISTS instance_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  instance_id TEXT NOT NULL,
+  level TEXT DEFAULT 'INFO',
+  message TEXT NOT NULL,
+  ts TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_logs_instance_ts ON instance_logs(instance_id, ts);
+CREATE TABLE IF NOT EXISTS resource_benchmarks (
+  id TEXT PRIMARY KEY,
+  resource_id TEXT NOT NULL,
+  bench_date TEXT NOT NULL,
+  train_throughput REAL,
+  inference_latency REAL,
+  stability TEXT DEFAULT '稳定'
+);
+CREATE INDEX IF NOT EXISTS idx_benchmarks_resource ON resource_benchmarks(resource_id, bench_date DESC);
+CREATE TABLE IF NOT EXISTS resource_reviews (
+  id TEXT PRIMARY KEY,
+  resource_id TEXT NOT NULL,
+  enterprise_id TEXT,
+  member_id TEXT,
+  user_name TEXT,
+  content TEXT,
+  stars INTEGER DEFAULT 5,
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_resource ON resource_reviews(resource_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS recharge_records (
+  id TEXT PRIMARY KEY,
+  enterprise_id TEXT,
+  channel TEXT DEFAULT 'mock',
+  amount REAL,
+  status TEXT DEFAULT '待支付',
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  paid_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_recharge_enterprise ON recharge_records(enterprise_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS auth_sessions (
   token_hash TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -387,6 +435,55 @@ const count = (t) => db.prepare(`SELECT COUNT(*) c FROM ${t}`).get().c;
 if (count('enterprises') === 0) seed();
 if (count('usage_records') === 0) seedUsageRecords();
 if (count('approval_policies') === 0) seedApprovalPolicies();
+if (count('instance_metrics') === 0) seedInstanceObservability();
+if (count('resource_reviews') === 0) seedResourceFeedback();
+
+function seedResourceFeedback() {
+  const insB = db.prepare('INSERT INTO resource_benchmarks (id, resource_id, bench_date, train_throughput, inference_latency, stability) VALUES (?,?,?,?,?,?)');
+  const insR = db.prepare('INSERT INTO resource_reviews (id, resource_id, enterprise_id, member_id, user_name, content, stars, created_at) VALUES (?,?,?,?,?,?,?,?)');
+  const dates = ['2026-08-01', '2026-07-15', '2026-07-01'];
+  const reviewers = [
+    ['u-eng', '李算法', '性能符合预期，训练吞吐与基准分一致。', 5],
+    ['u-pm', '王项目', '交付快，网络稳定，售后响应及时。', 4],
+    ['u-lab', '周教授', '高峰期偶有排队，整体可用。', 4],
+  ];
+  const resources = db.prepare('SELECT id, benchmark FROM resources').all();
+  resources.forEach((res, ri) => {
+    dates.forEach((d, i) => {
+      insB.run(`b-${res.id}-${i}`, res.id, d, Math.round(res.benchmark * (1.8 - i * 0.05)), (7 - i).toFixed(1), '稳定');
+    });
+    const [mid, name, content, stars] = reviewers[ri % reviewers.length];
+    insR.run(`rv-${res.id}`, res.id, 'ent-demo', mid, name, content, stars, '2026-08-10');
+  });
+}
+
+function seedInstanceObservability() {
+  const now = new Date();
+  const insMetrics = db.prepare('INSERT INTO instance_metrics (instance_id, ts, gpu, vram, cpu, mem) VALUES (?,?,?,?,?,?)');
+  const insLogs = db.prepare('INSERT INTO instance_logs (instance_id, level, message, ts) VALUES (?,?,?,?)');
+  const instances = db.prepare('SELECT id, status FROM instances').all();
+  for (const inst of instances) {
+    for (let i = 59; i >= 0; i--) {
+      const t = new Date(now.getTime() - i * 60000).toISOString().slice(11, 16);
+      const base = inst.status === '运行中' ? 1 : 0.1;
+      const gpu = Math.round(Math.min(100, Math.max(0, (55 + Math.sin(i / 5) * 25) * base)));
+      const vram = Math.round(Math.min(100, Math.max(0, (60 + Math.sin(i / 7) * 20) * base)));
+      const cpu = Math.round(Math.min(100, Math.max(0, (35 + Math.cos(i / 4) * 15) * base)));
+      const mem = Math.round(Math.min(100, Math.max(0, (48 + Math.sin(i / 6) * 12) * base)));
+      insMetrics.run(inst.id, t, gpu, vram, cpu, mem);
+    }
+    const ts = (offsetMin) => new Date(now.getTime() - offsetMin * 60000).toISOString().slice(0, 19).replace('T', ' ');
+    let logs;
+    if (inst.id === 'ins-007') {
+      logs = [['WARN', 'SSH 连接中断，正在重连 (1/3)', 40], ['INFO', 'network unreachable, retrying...', 32], ['INFO', 'reconnected to gateway', 18], ['INFO', 'compute agent heartbeat ok', 2]];
+    } else if (inst.status === '运行中') {
+      logs = [['INFO', 'compute agent started', 80], ['INFO', 'nvidia-smi: 8 GPUs detected, driver 550.90', 62], ['INFO', 'dataset loaded: 1,024,000 samples', 45], ['INFO', 'checkpoint saved', 10]];
+    } else {
+      logs = [['INFO', 'instance stopped, storage mounted', 90], ['INFO', 'agent idle', 50]];
+    }
+    logs.forEach(([level, message, offsetMin]) => insLogs.run(inst.id, level, message, ts(offsetMin)));
+  }
+}
 
 function seedApprovalPolicies() {
   const insert = db.prepare(`INSERT INTO approval_policies

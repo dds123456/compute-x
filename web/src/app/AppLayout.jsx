@@ -85,8 +85,10 @@ export default function AppLayout() {
 // ============ 工作台 ============
 function Home({ me, nav }) {
   const [data, setData] = useState(null);
+  const [alerts, setAlerts] = useState([]);
   useEffect(() => {
     api.get('/dashboard/overview', { params: { enterpriseId: localStorage.getItem('cx_enterprise') } }).then(({ overview }) => setData(overview));
+    api.get('/notify/alerts').then(({ alerts }) => setAlerts(alerts || [])).catch(() => {});
   }, []);
   if (!data) return <Spin style={{ display: 'block', margin: '60px auto' }} />;
 
@@ -138,14 +140,10 @@ function Home({ me, nav }) {
 
       {/* 告警动态卡 */}
       <Card size="small" style={{ borderRadius: 12, marginBottom: 12 }} title={<Space><AlertOutlined style={{ color: '#f5222d' }} />告警动态</Space>}>
-        {data.unreadAlerts > 0 ? (
-          <List size="small" dataSource={[
-            { t: '实例告警', i: 'test-l40s-sandbox', time: '14:20' },
-            { t: '过载提醒', i: 'llm-train-a100-01', time: '13:00' },
-            { t: '到期提醒', i: 'llm-train-4090-01', time: '18:00' },
-          ].slice(0, data.unreadAlerts)} renderItem={x => (
+        {alerts.length ? (
+          <List size="small" dataSource={alerts} renderItem={x => (
             <List.Item style={{ padding: '6px 0' }} onClick={() => nav('/app/instances')}>
-              <Space><Tag color="red">{x.t}</Tag><span style={{ fontSize: 13 }}>{x.i}</span><span style={{ fontSize: 11, color: '#a6b0c0' }}>{x.time}</span></Space>
+              <Space><Tag color={x.level === '严重' ? 'red' : x.level === '警告' ? 'orange' : 'blue'}>{x.type}</Tag><span style={{ fontSize: 13 }}>{x.instance_name}</span><span style={{ fontSize: 11, color: '#a6b0c0' }}>{x.triggered_at?.slice(11, 16)}</span></Space>
             </List.Item>
           )} />
         ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无告警" />}
@@ -561,7 +559,7 @@ function AppTicketDetail({ nav }) {
   return <div style={{ padding: 12 }}><Card size="small" style={{ borderRadius: 12, marginBottom: 10 }}>
     <Space><Tag>{ticket.type}</Tag><Tag color={STATUS_COLOR[ticket.status]}>{ticket.status}</Tag></Space><h3>{ticket.ticket_no}</h3><p>{ticket.content}</p>
   </Card><Card size="small" title="处理记录" style={{ borderRadius: 12, marginBottom: 10 }}>
-    {(ticket.replies || []).map((r, index) => <div key={index} style={{ padding: '8px 0', borderBottom: '1px solid #e5ece8' }}><b>{r.who}</b><div>{r.content}</div><small style={{ color: '#8da097' }}>{r.at}</small></div>)}
+    {(ticket.replies || []).map((r, index) => <div key={index} style={{ padding: '8px 0', borderBottom: '1px solid #e5ece8' }}><b>{r.who}</b><div>{r.msg}</div><small style={{ color: '#8da097' }}>{r.at}</small></div>)}
     <Space.Compact style={{ width: '100%', marginTop: 10 }}><Input value={reply} onChange={e => setReply(e.target.value)} placeholder="补充说明" /><Button type="primary" icon={<SendOutlined />} onClick={send} /></Space.Compact>
   </Card><Button block icon={<ArrowLeftOutlined />} onClick={() => nav('/app/tickets')}>返回</Button></div>;
 }

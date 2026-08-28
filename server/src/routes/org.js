@@ -23,7 +23,8 @@ r.post('/members', requireRoles('企业管理员'), (req, res) => {
 
 r.post('/members/:id/status', requireRoles('企业管理员'), (req, res) => {
   const { status } = req.body || {};
-  const m = db.prepare('SELECT * FROM members WHERE id = ?').get(req.params.id);
+  const m = db.prepare('SELECT * FROM members WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!m) return res.status(404).json({ ok: false, msg: '成员不存在' });
   db.prepare('UPDATE members SET status=? WHERE id=?').run(status, m.id);
   auditLog(m.enterprise_id, req.headers['x-user-id'], '成员', status === '禁用' ? '禁用成员' : '启用成员', m.name);
   res.json({ ok: true });
@@ -32,8 +33,9 @@ r.post('/members/:id/status', requireRoles('企业管理员'), (req, res) => {
 // 离职交接
 r.post('/members/:id/transfer', requireRoles('企业管理员'), (req, res) => {
   const { toId } = req.body || {};
-  const from = db.prepare('SELECT * FROM members WHERE id = ?').get(req.params.id);
-  const to = db.prepare('SELECT * FROM members WHERE id = ?').get(toId);
+  const from = db.prepare('SELECT * FROM members WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  const to = db.prepare('SELECT * FROM members WHERE id = ? AND enterprise_id = ?').get(toId, req.auth.enterpriseId);
+  if (!from || !to) return res.status(404).json({ ok: false, msg: '成员不存在' });
   db.prepare('UPDATE projects SET owner_id = ? WHERE owner_id = ?').run(toId, from.id);
   db.prepare('UPDATE instances SET member_id = ? WHERE member_id = ?').run(toId, from.id);
   db.prepare(`UPDATE members SET status='禁用' WHERE id=?`).run(from.id);
@@ -44,17 +46,25 @@ r.post('/members/:id/transfer', requireRoles('企业管理员'), (req, res) => {
 
 // ============ 项目 ============
 r.post('/projects', requireRoles('企业管理员', '项目负责人'), (req, res) => {
-  const { enterpriseId, name, ownerId, budget, threshold } = req.body || {};
+  const { enterpriseId, name, ownerId, budget, threshold, levels = 1, approvers } = req.body || {};
   const id = genId('p');
+  const approverList = Array.isArray(approvers) && approvers.length ? approvers : [ownerId];
   db.prepare(`INSERT INTO projects (id,enterprise_id,name,owner_id,budget,used,approval_rule,status,created_at) VALUES (?,?,?,?,?,0,?,?,?)`)
-    .run(id, enterpriseId, name, ownerId, Number(budget), JSON.stringify({ threshold: Number(threshold || 0), approvers: [ownerId], levels: 1 }), '正常', now());
-  auditLog(enterpriseId, req.headers['x-user-id'], '成员', '创建项目', `${name}（预算 ${budget} 元）`);
+    .run(id, enterpriseId, name, ownerId, Number(budget), JSON.stringify({ threshold: Number(threshold || 0), approvers: approverList, levels: Number(levels || 1) }), '正常', now());
+  // 同步生成多级审批策略（approval_policies）
+  try {
+    db.prepare(`INSERT OR IGNORE INTO approval_policies (id,enterprise_id,project_id,name,min_amount,steps_json,status,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,1,?,?)`)
+      .run(`policy-${id}`, enterpriseId, id, `${name}采购审批`, Number(threshold || 0),
+        JSON.stringify(approverList.map((approverId, i) => ({ stepNo: i + 1, approverId }))), '启用', now(), now());
+  } catch { /* 已存在则忽略 */ }
+  auditLog(enterpriseId, req.headers['x-user-id'], '成员', '创建项目', `${name}（预算 ${budget} 元，${levels} 级审批）`);
   res.json({ ok: true, msg: '项目创建成功', id });
 });
 
 r.post('/projects/:id/budget', requireRoles('企业管理员', '财务', '项目负责人'), (req, res) => {
   const { budget } = req.body || {};
-  const p = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+  const p = db.prepare('SELECT * FROM projects WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!p) return res.status(404).json({ ok: false, msg: '项目不存在' });
   db.prepare('UPDATE projects SET budget=? WHERE id=?').run(Number(budget), p.id);
   auditLog(p.enterprise_id, req.headers['x-user-id'], '成员', '修改项目预算', `${p.name} → ${budget} 元`);
   res.json({ ok: true, msg: '预算已更新' });

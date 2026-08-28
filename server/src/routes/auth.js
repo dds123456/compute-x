@@ -1,11 +1,44 @@
 import { Router } from 'express';
 import db from '../db.js';
-import { createGuestSession, createSession, createSuperTestSession, ensureGuestMember, ensureSuperTestMember, hashPassword, revokeSession, safeMember, verifyPassword } from '../security.js';
+import { createGuestSession, createSession, createSuperTestSession, createRateLimiter, ensureBackendMember, ensureGuestMember, ensureSuperTestMember, hashPassword, revokeSession, safeMember, verifyPassword } from '../security.js';
 
 const r = Router();
 const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
 const GUEST_RATE_LIMIT_MAX = Number(process.env.GUEST_RATE_LIMIT_MAX || 20);
 const guestRateBuckets = new Map();
+
+// 登录失败锁定（IP + 账号双维度防暴力破解）
+const LOGIN_FAIL_WINDOW_MS = Number(process.env.LOGIN_FAIL_WINDOW_MS || 10 * 60 * 1000);
+const LOGIN_FAIL_MAX = Number(process.env.LOGIN_FAIL_MAX || 8);
+const loginFailBuckets = new Map();
+
+function clientIp(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '');
+  return forwarded.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+}
+
+function recordLoginFailure(req, accountKey) {
+  const key = `${clientIp(req)}|${accountKey}`;
+  const nowMs = Date.now();
+  let bucket = loginFailBuckets.get(key);
+  if (!bucket || bucket.resetAt <= nowMs) bucket = { count: 0, resetAt: nowMs + LOGIN_FAIL_WINDOW_MS };
+  bucket.count += 1;
+  loginFailBuckets.set(key, bucket);
+}
+
+function clearLoginFailures(req, accountKey) {
+  loginFailBuckets.delete(`${clientIp(req)}|${accountKey}`);
+}
+
+function loginLocked(req, res, accountKey) {
+  const bucket = loginFailBuckets.get(`${clientIp(req)}|${accountKey}`);
+  if (!bucket || bucket.resetAt <= Date.now() || bucket.count < LOGIN_FAIL_MAX) return false;
+  const retryMin = Math.max(1, Math.ceil((bucket.resetAt - Date.now()) / 60000));
+  res.status(429).json({ ok: false, msg: `登录失败次数过多，请 ${retryMin} 分钟后重试` });
+  return true;
+}
+
+const loginLimiter = createRateLimiter({ windowMs: 10 * 60 * 1000, max: 60, keyPrefix: 'login' });
 
 function allowGuestSession(req, res) {
   const forwarded = String(req.headers['x-forwarded-for'] || '');
@@ -30,21 +63,28 @@ function allowGuestSession(req, res) {
 }
 
 // 登录：POST /api/auth/login { account, password } 或 { userId } / { username }（兼容一键登录）
-r.post('/login', (req, res) => {
+r.post('/login', loginLimiter, (req, res) => {
   const { userId, username, account, password } = req.body || {};
+  const accountKey = userId || account || username || '';
+  if (!accountKey) return res.status(400).json({ ok: false, msg: '请输入账号' });
+  if (loginLocked(req, res, accountKey)) return;
   let member;
   if (userId) {
-    if (process.env.NODE_ENV === 'production') return res.status(404).json({ ok: false, msg: '账号不存在' });
+    if (process.env.NODE_ENV === 'production') {
+      recordLoginFailure(req, accountKey);
+      return res.status(404).json({ ok: false, msg: '账号不存在' });
+    }
     member = db.prepare('SELECT * FROM members WHERE id = ?').get(userId);
   }
   else {
     const key = account || username;
-    if (!key) return res.status(400).json({ ok: false, msg: '请输入账号' });
     if (process.env.SUPER_TEST_ENABLED === 'true' && key === process.env.SUPER_TEST_ACCOUNT) {
       const passwordHash = process.env.SUPER_TEST_PASSWORD_HASH || '';
       if (!passwordHash || !verifyPassword(password, passwordHash)) {
+        recordLoginFailure(req, accountKey);
         return res.status(401).json({ ok: false, msg: '账号或密码错误，请重试' });
       }
+      clearLoginFailures(req, accountKey);
       member = ensureSuperTestMember();
       const ent = db.prepare('SELECT * FROM enterprises WHERE id = ?').get(member.enterprise_id);
       const session = createSuperTestSession();
@@ -52,15 +92,20 @@ r.post('/login', (req, res) => {
     }
     member = db.prepare('SELECT * FROM members WHERE name = ? OR phone = ? OR email = ?').get(key, key, key);
   }
-  if (!member) return res.status(401).json({ ok: false, msg: '账号不存在，请检查后重试' });
+  if (!member) {
+    recordLoginFailure(req, accountKey);
+    return res.status(401).json({ ok: false, msg: '账号不存在，请检查后重试' });
+  }
   if (member.id === 'u-guest') return res.status(403).json({ ok: false, msg: '请使用游客体验入口' });
   if (member.status === '禁用') return res.status(403).json({ ok: false, msg: '账号已禁用，请联系企业管理员' });
   if (password !== undefined && !verifyPassword(password, member.password)) {
+    recordLoginFailure(req, accountKey);
     return res.status(401).json({ ok: false, msg: '密码错误，请重试' });
   }
   if (password !== undefined && !member.password?.startsWith('scrypt$')) {
     db.prepare('UPDATE members SET password = ? WHERE id = ?').run(hashPassword(password), member.id);
   }
+  clearLoginFailures(req, accountKey);
   const ent = db.prepare('SELECT * FROM enterprises WHERE id = ?').get(member.enterprise_id);
   const session = createSession(member.id);
   res.json({ ok: true, ...session, member: safeMember(member), enterprise: ent, isGuest: 0 });
@@ -98,6 +143,16 @@ r.get('/demo-accounts', (req, res) => {
   const rows = db.prepare('SELECT id, name, role, enterprise_id FROM members WHERE is_demo = 1 OR enterprise_id IS NOT NULL').all();
   const ents = db.prepare('SELECT id, name FROM enterprises').all();
   res.json({ ok: true, accounts: rows, enterprises: ents });
+});
+
+// 后台演示一键进入（非生产）：平台管理员 / 资源方运营
+r.post('/backend', (req, res) => {
+  if (process.env.NODE_ENV === 'production') return res.status(404).json({ ok: false, msg: 'Not found' });
+  const { role } = req.body || {};
+  if (!['平台管理员', '资源方运营'].includes(role)) return res.status(400).json({ ok: false, msg: '角色参数错误' });
+  const member = ensureBackendMember(role);
+  const session = createSession(member.id);
+  res.json({ ok: true, ...session, member: safeMember(member), enterprise: { id: member.enterprise_id }, isGuest: 0 });
 });
 
 // 企业列表（切换器）

@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import db from '../db.js';
 import { now, genId, genNo, notify, auditLog, calcInstanceCost, transitionInstance, STATUS_ACTIONS } from '../utils.js';
+import { createRateLimiter } from '../security.js';
 
 const r = Router();
+const writeLimiter = createRateLimiter({ windowMs: 10 * 60 * 1000, max: 120, keyPrefix: 'orders-write' });
 
 // ============ 下单 ============
-r.post('/create', (req, res) => {
+r.post('/create', writeLimiter, (req, res) => {
   const { resourceId, quantity = 1, hours, billingType = '按小时', projectId, memberId, enterpriseId, name, imageId, envVars, sshKey, checkpoint = false, autoRelease = false } = req.body || {};
   const resource = db.prepare('SELECT * FROM resources WHERE id = ?').get(resourceId);
   if (!resource) return res.status(404).json({ ok: false, msg: '资源不存在' });
@@ -49,9 +51,9 @@ r.post('/create', (req, res) => {
 });
 
 // 支付订单
-r.post('/pay', (req, res) => {
+r.post('/pay', writeLimiter, (req, res) => {
   const { orderId } = req.body || {};
-  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
+  const order = db.prepare('SELECT * FROM orders WHERE id = ? AND enterprise_id = ?').get(orderId, req.auth.enterpriseId);
   if (!order) return res.status(404).json({ ok: false, msg: '订单不存在' });
   if (order.status !== '待支付') return res.json({ ok: false, msg: '订单状态不可支付' });
 
@@ -128,22 +130,34 @@ r.get('/instances/:id', (req, res) => {
   const alerts = db.prepare('SELECT * FROM alerts WHERE instance_id = ? ORDER BY triggered_at DESC').all(inst.id);
   const snapshots = db.prepare('SELECT * FROM snapshots WHERE instance_id = ?').all(inst.id);
   const actions = STATUS_ACTIONS[inst.status] || [];
-  // 监控序列（模拟近1小时）
-  const nowTs = Date.now();
+  // 监控序列（优先读实例指标表，无数据时降级为模拟）
+  const metricRows = db.prepare('SELECT ts, gpu, vram, cpu, mem FROM instance_metrics WHERE instance_id = ? ORDER BY id DESC LIMIT 60').all(inst.id).reverse();
   const monitor = { gpu: [], vram: [], cpu: [], mem: [] };
-  for (let i = 59; i >= 0; i--) {
-    const t = new Date(nowTs - i * 60000).toISOString().slice(11, 16);
-    const base = inst.status === '运行中' ? 1 : 0.1;
-    monitor.gpu.push({ t, v: Math.round(Math.min(100, Math.max(0, (55 + Math.sin(i / 5) * 25 + Math.random() * 10) * base))) });
-    monitor.vram.push({ t, v: Math.round(Math.min(100, Math.max(0, (60 + Math.sin(i / 7) * 20 + Math.random() * 8) * base))) });
-    monitor.cpu.push({ t, v: Math.round(Math.min(100, Math.max(0, (35 + Math.cos(i / 4) * 15 + Math.random() * 12) * base))) });
-    monitor.mem.push({ t, v: Math.round(Math.min(100, Math.max(0, (48 + Math.sin(i / 6) * 12 + Math.random() * 6) * base))) });
+  if (metricRows.length) {
+    metricRows.forEach(m => {
+      monitor.gpu.push({ t: m.ts, v: m.gpu });
+      monitor.vram.push({ t: m.ts, v: m.vram });
+      monitor.cpu.push({ t: m.ts, v: m.cpu });
+      monitor.mem.push({ t: m.ts, v: m.mem });
+    });
+  } else {
+    const nowTs = Date.now();
+    for (let i = 59; i >= 0; i--) {
+      const t = new Date(nowTs - i * 60000).toISOString().slice(11, 16);
+      const base = inst.status === '运行中' ? 1 : 0.1;
+      monitor.gpu.push({ t, v: Math.round(Math.min(100, Math.max(0, (55 + Math.sin(i / 5) * 25 + Math.random() * 10) * base))) });
+      monitor.vram.push({ t, v: Math.round(Math.min(100, Math.max(0, (60 + Math.sin(i / 7) * 20 + Math.random() * 8) * base))) });
+      monitor.cpu.push({ t, v: Math.round(Math.min(100, Math.max(0, (35 + Math.cos(i / 4) * 15 + Math.random() * 12) * base))) });
+      monitor.mem.push({ t, v: Math.round(Math.min(100, Math.max(0, (48 + Math.sin(i / 6) * 12 + Math.random() * 6) * base))) });
+    }
   }
   res.json({ ok: true, instance: { ...inst, current_cost: calcInstanceCost(inst), resource, alerts, snapshots, actions, monitor } });
 });
 
 r.post('/instances/:id/action', (req, res) => {
   const { action } = req.body || {};
+  const owned = db.prepare('SELECT id FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!owned) return res.status(404).json({ ok: false, msg: '实例不存在' });
   const result = transitionInstance(req.params.id, action);
   if (!result.ok) return res.json({ ok: false, msg: result.msg });
   const inst = db.prepare('SELECT * FROM instances WHERE id = ?').get(req.params.id);
@@ -153,21 +167,65 @@ r.post('/instances/:id/action', (req, res) => {
 
 // 创建快照
 r.post('/instances/:id/snapshot', (req, res) => {
-  const inst = db.prepare('SELECT * FROM instances WHERE id = ?').get(req.params.id);
+  const inst = db.prepare('SELECT * FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
   if (!inst) return res.status(404).json({ ok: false, msg: '实例不存在' });
   const name = req.body.name || `snapshot-${Date.now().toString().slice(-6)}`;
   db.prepare('INSERT INTO snapshots VALUES (?,?,?,?,?)').run(genId('snap'), inst.id, name, '120GB', now());
   res.json({ ok: true, msg: '快照创建成功' });
 });
 
-// 日志（模拟）
+// 变更配置：切换资源规格，按 7 天差价补扣
+r.post('/instances/:id/change-spec', (req, res) => {
+  const { resourceId } = req.body || {};
+  const inst = db.prepare('SELECT * FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!inst) return res.status(404).json({ ok: false, msg: '实例不存在' });
+  const resource = db.prepare('SELECT * FROM resources WHERE id = ?').get(resourceId);
+  if (!resource) return res.status(404).json({ ok: false, msg: '资源不存在' });
+  if (resource.status !== '可售') return res.status(400).json({ ok: false, msg: '目标资源当前不可售' });
+  const newPrice = inst.billing_type === '包日' ? (resource.price_day || resource.price_hour * 24) : inst.billing_type === '包月' ? (resource.price_month || resource.price_hour * 720) : resource.price_hour;
+  const fee = newPrice > inst.price_hour ? Math.round((newPrice - inst.price_hour) * 7 * 100) / 100 : 0;
+  if (fee > 0) {
+    const ent = db.prepare('SELECT balance FROM enterprises WHERE id = ?').get(inst.enterprise_id);
+    if (!ent || ent.balance < fee) return res.json({ ok: false, msg: `余额不足（变更配置需补差 ${fee} 元）` });
+    db.prepare('UPDATE enterprises SET balance = balance - ? WHERE id = ?').run(fee, inst.enterprise_id);
+  }
+  db.prepare('UPDATE instances SET resource_id=?, provider_id=?, spec=?, gpu_model=?, price_hour=? WHERE id=?').run(resource.id, resource.provider_id, resource.spec, resource.gpu_model, newPrice, inst.id);
+  auditLog(inst.enterprise_id, req.headers['x-user-id'] || inst.member_id, '成员', '变更实例配置', `${inst.name} → ${resource.spec}${fee > 0 ? `（补差 ${fee} 元）` : ''}`);
+  notify(inst.enterprise_id, inst.member_id, '实例', '配置变更成功', `${inst.name} 已变更为 ${resource.spec}`, `/instances/${inst.id}`);
+  res.json({ ok: true, msg: '配置变更成功', fee });
+});
+
+// 恢复快照
+r.post('/instances/:id/restore', (req, res) => {
+  const inst = db.prepare('SELECT * FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!inst) return res.status(404).json({ ok: false, msg: '实例不存在' });
+  db.prepare(`UPDATE instances SET status='恢复中' WHERE id=?`).run(inst.id);
+  auditLog(inst.enterprise_id, req.headers['x-user-id'] || inst.member_id, '成员', '恢复快照', inst.name);
+  setTimeout(() => { try { db.prepare(`UPDATE instances SET status='运行中' WHERE id=?`).run(inst.id); } catch (e) { /* ignore */ } }, 1500);
+  notify(inst.enterprise_id, inst.member_id, '实例', '快照恢复中', `${inst.name} 正在从快照恢复，预计 1-2 分钟`, `/instances/${inst.id}`);
+  res.json({ ok: true, msg: '快照恢复已触发' });
+});
+
+// 实例计费明细（真实用量记录）
+r.get('/instances/:id/usage', (req, res) => {
+  const owned = db.prepare('SELECT id FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!owned) return res.status(404).json({ ok: false, msg: '实例不存在' });
+  const usage = db.prepare('SELECT usage_date, gpu_hours, gpu_utilization, cost, carbon_kg, source FROM usage_records WHERE instance_id = ? ORDER BY usage_date').all(req.params.id);
+  res.json({ ok: true, instanceId: req.params.id, usage });
+});
+
+// 日志（优先读实例日志表，无数据时降级为模拟）
 r.get('/instances/:id/logs', (req, res) => {
   const inst = db.prepare('SELECT * FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!inst) return res.json({ ok: true, lines: [] });
+  const stored = db.prepare('SELECT level, message, ts FROM instance_logs WHERE instance_id = ? ORDER BY id DESC LIMIT 100').all(inst.id).reverse();
+  if (stored.length) {
+    return res.json({ ok: true, lines: stored.map(l => `[${l.level}] ${l.ts} ${l.message}`) });
+  }
   const lines = [];
-  if (!inst) return res.json({ ok: true, lines });
   const isTrain = inst.image.includes('训练') || inst.image.includes('PyTorch');
   const base = [
-    `[INFO] 2026-08-17 ${new Date().toISOString().slice(11, 19)} ComputeX agent started (v1.2.3)`,
+    `[INFO] ${new Date().toISOString().slice(0, 19).replace('T', ' ')} ComputeX agent started (v1.2.3)`,
     `[INFO] mounting /data (ext4, 4.0TB)`,
     `[INFO] nvidia-smi: ${inst.gpu_model} ×8 detected, driver 550.90`,
   ];

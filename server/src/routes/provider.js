@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireRoles } from '../security.js';
 import db from '../db.js';
-import { now, genId, genNo, calcInstanceCost } from '../utils.js';
+import { now, genId, genNo, calcInstanceCost, auditLog } from '../utils.js';
 
 const r = Router();
 r.use(requireRoles('资源方运营'));
@@ -14,18 +14,23 @@ r.get('/overview', (req, res) => {
   const settlements = db.prepare('SELECT * FROM settlements WHERE provider_id = ?').all(providerId);
   const running = insts.filter(i => i.status === '运行中').length;
   const totalRevenue = settlements.reduce((s, x) => s + x.amount, 0);
-  const monthRevenue = settlements.filter(x => x.period === '2026-08').reduce((s, x) => s + x.amount, 0);
+  const yyyymm = new Date().toISOString().slice(0, 7);
+  const monthRevenue = settlements.filter(x => x.period === yyyymm).reduce((s, x) => s + x.amount, 0);
   const stockTotal = resources.reduce((s, x) => s + x.stock, 0);
   const faultCount = insts.filter(i => i.status === '异常').length;
-  // 收益趋势（近6周模拟）
-  const trend = [32000, 41000, 38500, 52000, 47000, monthRevenue].map((v, i) => ({ w: `W${i + 1}`, v }));
+  // 收益趋势：按账期真实聚合（近 6 期）
+  const byPeriod = {};
+  settlements.forEach(x => { byPeriod[x.period] = (byPeriod[x.period] || 0) + x.amount; });
+  const trend = Object.entries(byPeriod).sort((a, b) => a[0].localeCompare(b[0])).slice(-6).map(([period, v]) => ({ w: `${Number(period.slice(5))}月`, v }));
+  // 利用率：运行实例 / 可售库存
+  const capacity = resources.filter(x => x.status !== '维护中').reduce((s, x) => s + x.stock + 2, 0);
+  const utilization = capacity > 0 ? Math.min(95, Math.round((running / capacity) * 100)) : 0;
   res.json({
     ok: true,
     overview: {
       running, totalRevenue, monthRevenue, stockTotal, resourcesCount: resources.length,
       faultCount, settlementPending: settlements.filter(x => x.status === '待结算').length,
-      utilization: Math.min(95, Math.round(running / Math.max(1, resources.reduce((s, x) => s + (x.stock + (x.status === '维护中' ? 0 : 2)), 0)) * 100)),
-      trend,
+      utilization, trend,
     },
   });
 });
@@ -42,14 +47,18 @@ r.get('/resources', (req, res) => {
 // 上架/下架
 r.post('/resources/:id/status', (req, res) => {
   const { status } = req.body || {};
+  const resRow = db.prepare('SELECT * FROM resources WHERE id = ?').get(req.params.id);
   db.prepare('UPDATE resources SET status=? WHERE id=?').run(status, req.params.id);
+  auditLog('', req.headers['x-user-id'] || '资源方', '资源方', status === '可售' ? '上架资源' : '下架资源', resRow?.spec || req.params.id);
   res.json({ ok: true, msg: status === '可售' ? '已上架' : '已下架' });
 });
 
 // 更新报价
 r.post('/resources/:id/price', (req, res) => {
   const { price_hour, price_day, price_month } = req.body || {};
+  const resRow = db.prepare('SELECT * FROM resources WHERE id = ?').get(req.params.id);
   db.prepare('UPDATE resources SET price_hour=?, price_day=?, price_month=? WHERE id=?').run(price_hour, price_day, price_month, req.params.id);
+  auditLog('', req.headers['x-user-id'] || '资源方', '资源方', '调整资源报价', `${resRow?.spec || req.params.id} → ${price_hour} 元/时`);
   res.json({ ok: true, msg: '报价已更新' });
 });
 
