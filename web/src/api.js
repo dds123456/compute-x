@@ -3,19 +3,14 @@ import axios from 'axios';
 const api = axios.create({ baseURL: '/api' });
 
 api.interceptors.request.use((cfg) => {
-  const token = localStorage.getItem('cx_token');
-  if (token) cfg.headers.Authorization = `Bearer ${token}`;
+  const uid = localStorage.getItem('cx_uid');
+  if (uid) cfg.headers['X-User-Id'] = uid;
   return cfg;
 });
 
 api.interceptors.response.use(
   (res) => res.data,
   (err) => {
-    if (err.response?.status === 401 && window.location.pathname !== '/login') {
-      localStorage.removeItem('cx_token');
-      localStorage.removeItem('cx_uid');
-      window.location.assign('/login?expired=1');
-    }
     const msg = err.response?.data?.msg || err.message || '网络异常';
     return Promise.reject(new Error(msg));
   }

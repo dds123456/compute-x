@@ -4,7 +4,6 @@ import { Card, Descriptions, Table, Button, Space, Tag, message, Statistic, Row,
 import { PayCircleOutlined, FileTextOutlined, WarningOutlined, DownloadOutlined } from '@ant-design/icons';
 import api from '../api.js';
 import { fmtMoney, STATUS_COLOR } from '../api.js';
-import { downloadCsv } from '../utils/download.js';
 
 export default function BillDetail() {
   const { id } = useParams();
@@ -16,13 +15,6 @@ export default function BillDetail() {
 
   if (!data) return null;
   const { bill, enterprise } = data;
-  const exportDetail = () => {
-    downloadCsv(`${bill.bill_no}-明细.csv`, bill.items, [
-      ['账单号', () => bill.bill_no], ['账期', () => bill.period], ['实例/项目', 'name'], ['规格', 'spec'],
-      ['小时数', 'hours'], ['天数', 'days'], ['单价', 'rate'], ['金额', 'amount'],
-    ]);
-    message.success('账单明细已导出');
-  };
 
   const pay = async () => {
     try { const { msg } = await api.post(`/billing/bills/${id}/pay`); message.success(msg); load(); }
@@ -44,8 +36,8 @@ export default function BillDetail() {
             <Space>
               {bill.status === '待支付' && <Button type="primary" icon={<PayCircleOutlined />} onClick={pay}>立即支付</Button>}
               {bill.invoice_status === '未开票' && <Button icon={<FileTextOutlined />} onClick={() => nav('/console/invoices')}>申请开票</Button>}
-              <Button icon={<WarningOutlined />} onClick={() => nav(`/console/tickets?bill=${bill.id}`)}>计费争议</Button>
-              <Button icon={<DownloadOutlined />} onClick={exportDetail}>导出</Button>
+              <Button icon={<WarningOutlined />} onClick={() => nav(`/console/tickets/create?bill=${bill.id}`)}>计费争议</Button>
+              <Button icon={<DownloadOutlined />} onClick={() => message.success('已导出 Excel（演示）')}>导出</Button>
             </Space>
           </Col>
         </Row>

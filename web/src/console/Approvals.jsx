@@ -1,33 +1,85 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, Col, Empty, Input, Modal, Row, Space, Steps, Tag, Typography, message } from 'antd';
-import { AuditOutlined, CheckCircleOutlined, CloseCircleOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
-import api, { fmtMoney } from '../api.js';
+import { Card, Table, Tag, Button, Space, Modal, Input, message, Descriptions, Timeline, Empty } from 'antd';
+import { CheckCircleOutlined, CloseCircleOutlined, AuditOutlined } from '@ant-design/icons';
+import api from '../api.js';
+import { fmtMoney, STATUS_COLOR } from '../api.js';
 
-const { Title, Text } = Typography;
+export default function Approvals({ me }) {
+  const [list, setList] = useState([]);
+  const [cur, setCur] = useState(null);
+  const [note, setNote] = useState('');
+  const [members, setMembers] = useState([]);
+  const uid = localStorage.getItem('cx_uid');
 
-export default function Approvals() {
-  const [requests, setRequests] = useState([]);
-  const [policies, setPolicies] = useState([]);
-  const [current, setCurrent] = useState(null);
-  const [comment, setComment] = useState('');
-  const isGuest = localStorage.getItem('cx_guest') === '1';
-  const load = () => Promise.all([api.get('/approvals-v3/requests'), api.get('/approvals-v3/policies')]).then(([a, b]) => { setRequests(a.requests); setPolicies(b.policies); });
-  useEffect(() => { load(); }, []);
-  const decide = async action => {
-    if (action === '驳回' && !comment.trim()) return message.warning('驳回必须填写原因');
-    try {
-      await api.post(`/approvals-v3/requests/${current.id}/decision`, { action, comment });
-      message.success(action === '通过' ? '本步骤已通过；审批不会自动支付或交付' : '已驳回并写入审计轨迹');
-      setCurrent(null); setComment(''); load();
-    } catch (error) { message.error(error.message); }
+  const load = () => {
+    api.get('/org/approvals', { params: { userId: uid, enterpriseId: localStorage.getItem('cx_enterprise') } }).then(({ approvals }) => setList(approvals));
+    api.get('/org/members', { params: { enterpriseId: localStorage.getItem('cx_enterprise') } }).then(({ members }) => setMembers(members));
   };
-  return <div className="cx-v3-page">
-    <section className="cx-v3-hero"><div><div className="cx-eyebrow">APPROVAL CONTROL / V2</div><Title level={2}>审批与履约隔离</Title><Text type="secondary">策略决定谁能批准；批准只产生决策结果，支付与实例交付保持独立。</Text></div><div className="cx-trust-chip"><SafetyCertificateOutlined /> 职责分离</div></section>
-    {isGuest && <Alert type="info" showIcon message="游客模式为只读审批视图" style={{ marginBottom: 16 }} />}
-    <Row gutter={[16, 16]}>
-      <Col xs={24} xl={16}><Card title={<Space><AuditOutlined />审批请求</Space>}>{requests.length ? <div className="cx-approval-list">{requests.map(request => <button type="button" className="cx-approval-row" key={request.id} onClick={() => setCurrent(request)}><div><Tag color={request.status === '待审批' ? 'orange' : request.status === '已通过' ? 'green' : 'red'}>{request.status}</Tag><b>¥{fmtMoney(request.amount)}</b><span>{request.id}</span></div><Steps size="small" current={Math.max(0, request.currentStep - 1)} status={request.status === '已驳回' ? 'error' : request.status === '已通过' ? 'finish' : 'process'} items={request.steps.map(step => ({ title: `第 ${step.stepNo} 级`, description: step.status }))} /></button>)}</div> : <Empty description="暂无 V3 审批请求" />}</Card></Col>
-      <Col xs={24} xl={8}><Card title="生效策略">{policies.map(policy => <div className="cx-policy" key={policy.id}><div><b>{policy.project_name}</b><Tag color="green">{policy.status}</Tag></div><Text type="secondary">金额达到 ¥{fmtMoney(policy.min_amount)} 触发</Text><div className="cx-policy-steps">{policy.steps.map((step, index) => <span key={step.approverId}>{index + 1}. {step.approverId}</span>)}</div></div>)}</Card></Col>
-    </Row>
-    <Modal title="审批决策轨迹" open={!!current} onCancel={() => setCurrent(null)} footer={null} width={680}>{current && <><div className="cx-approval-summary"><div><span>申请金额</span><b>¥{fmtMoney(current.amount)}</b></div><div><span>草稿状态</span><b>{current.draftStatus}</b></div><div><span>提交时间</span><b>{current.submittedAt}</b></div></div><Steps direction="vertical" current={Math.max(0, current.currentStep - 1)} status={current.status === '已驳回' ? 'error' : 'process'} items={current.steps.map(step => ({ title: `第 ${step.stepNo} 级审批 · ${step.approverId}`, description: `${step.status}${step.comment ? ` · ${step.comment}` : ''}${step.decidedAt ? ` · ${step.decidedAt}` : ''}` }))} />{current.status === '待审批' && !isGuest && <><Input.TextArea value={comment} onChange={event => setComment(event.target.value)} placeholder="填写核验结论；驳回时必填…" maxLength={500} showCount /><Space style={{ marginTop: 12 }}><Button type="primary" icon={<CheckCircleOutlined />} onClick={() => decide('通过')}>通过当前步骤</Button><Button danger icon={<CloseCircleOutlined />} onClick={() => decide('驳回')}>驳回</Button></Space></>}</>}</Modal>
-  </div>;
+  useEffect(load, []);
+
+  const decide = async (id, action) => {
+    if (action === '驳回' && !note) return message.warning('驳回必须填写原因');
+    await api.post(`/org/approvals/${id}/decide`, { action, note });
+    message.success(action === '通过' ? '已通过，关联订单自动执行' : '已驳回');
+    setCur(null); setNote(''); load();
+  };
+
+  const name = (id) => members.find(m => m.id === id)?.name || id;
+
+  return (
+    <div>
+      <Card size="small" title={<Space><AuditOutlined />审批中心（{list.filter(a => a.status === '待审批').length} 条待处理）</Space>}>
+        {list.length === 0 && <Empty description="暂无审批记录" />}
+        <Table rowKey="id" dataSource={list} pagination={false} columns={[
+          { title: '类型', dataIndex: 'type', width: 110, render: v => <Tag color={v === '实例购买' ? 'blue' : v === '预算申请' ? 'orange' : 'purple'}>{v}</Tag> },
+          { title: '标题', dataIndex: 'title' },
+          { title: '申请人', dataIndex: 'applicant_name', width: 100 },
+          { title: '状态', dataIndex: 'status', width: 100, render: v => <Tag color={STATUS_COLOR[v]}>{v}</Tag> },
+          { title: '提交时间', dataIndex: 'created_at', width: 160, render: v => <span style={{ fontSize: 12 }}>{v}</span> },
+          { title: '操作', key: 'op', width: 90, render: (_, a) => a.status === '待审批' ? (
+            <Button size="small" type="primary" onClick={() => setCur(a)}>处理</Button>
+          ) : <Button size="small" onClick={() => setCur(a)}>查看</Button> },
+        ]} />
+      </Card>
+
+      <Modal title={`审批详情：${cur?.title || ''}`} open={!!cur} onCancel={() => setCur(null)} footer={null} width={640}>
+        {cur && (
+          <div>
+            <Descriptions column={2} bordered size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="类型">{cur.type}</Descriptions.Item>
+              <Descriptions.Item label="状态"><Tag color={STATUS_COLOR[cur.status]}>{cur.status}</Tag></Descriptions.Item>
+              <Descriptions.Item label="申请人">{name(cur.applicant_id)}</Descriptions.Item>
+              <Descriptions.Item label="提交时间">{cur.created_at}</Descriptions.Item>
+              <Descriptions.Item label="关联对象">{cur.related || '-'}</Descriptions.Item>
+              <Descriptions.Item label="审批人">{name(cur.approver_id)}</Descriptions.Item>
+            </Descriptions>
+            {JSON.parse(cur.detail || '{}').amount && (
+              <Descriptions column={2} bordered size="small" style={{ marginBottom: 16 }}>
+                <Descriptions.Item label="规格">{JSON.parse(cur.detail).spec}</Descriptions.Item>
+                <Descriptions.Item label="金额"><b style={{ color: '#f5222d' }}>¥{fmtMoney(JSON.parse(cur.detail).amount)}</b></Descriptions.Item>
+                <Descriptions.Item label="时长">{JSON.parse(cur.detail).duration}</Descriptions.Item>
+                <Descriptions.Item label="数量">{JSON.parse(cur.detail).quantity || 1}</Descriptions.Item>
+              </Descriptions>
+            )}
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>审批历史</div>
+            {JSON.parse(cur.history || '[]').length === 0 ? <div style={{ color: '#a6b0c0' }}>暂无处理记录</div> : (
+              <Timeline items={JSON.parse(cur.history).map((h, i) => ({
+                color: h.action === '通过' ? 'green' : 'red',
+                children: <span><b>{name(h.who)}</b> {h.action === '通过' ? '通过' : '驳回'} · {h.at}{h.note ? ` · 备注：${h.note}` : ''}</span>,
+              }))} />
+            )}
+            {cur.status === '待审批' && (
+              <div style={{ marginTop: 16 }}>
+                <Input.TextArea rows={2} placeholder="驳回时填写原因（通过可选填）" value={note} onChange={e => setNote(e.target.value)} style={{ marginBottom: 12 }} />
+                <Space>
+                  <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => decide(cur.id, '通过')}>通过</Button>
+                  <Button danger icon={<CloseCircleOutlined />} onClick={() => decide(cur.id, '驳回')}>驳回</Button>
+                </Space>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
 }

@@ -4,7 +4,6 @@ import { Card, Table, Tag, Button, Space, Segmented, Statistic, Row, Col, messag
 import { PayCircleOutlined, FileTextOutlined, DownloadOutlined } from '@ant-design/icons';
 import api from '../api.js';
 import { fmtMoney, STATUS_COLOR } from '../api.js';
-import { downloadCsv } from '../utils/download.js';
 
 export default function Bills() {
   const nav = useNavigate();
@@ -35,14 +34,6 @@ export default function Bills() {
   };
 
   const pending = list.filter(b => b.status === '待支付').reduce((s, b) => s + b.amount, 0);
-  const exportBill = (bill) => {
-    const items = JSON.parse(bill.items || '[]');
-    downloadCsv(`${bill.bill_no}-明细.csv`, items, [
-      ['账单号', () => bill.bill_no], ['账期', () => bill.period], ['实例/项目', 'name'], ['规格', 'spec'],
-      ['小时数', 'hours'], ['天数', 'days'], ['单价', 'rate'], ['金额', 'amount'], ['账单状态', () => bill.status],
-    ]);
-    message.success('账单明细已导出');
-  };
 
   return (
     <div>
@@ -71,7 +62,7 @@ export default function Bills() {
               {b.status === '待支付' && <Popconfirm title="确认支付该账单？" onConfirm={() => pay(b.id)}><Button size="small" type="primary" icon={<PayCircleOutlined />}>支付</Button></Popconfirm>}
               {b.invoice_status === '未开票' && <Button size="small" icon={<FileTextOutlined />} onClick={() => nav('/console/invoices')}>开票</Button>}
               <Button size="small" onClick={() => nav(`/console/bills/${b.id}`)}>明细</Button>
-              <Button size="small" icon={<DownloadOutlined />} onClick={() => exportBill(b)}>导出</Button>
+              <Button size="small" icon={<DownloadOutlined />} onClick={() => message.success('账单明细已导出 CSV（演示）')}>导出</Button>
             </Space>
           )},
         ]} />

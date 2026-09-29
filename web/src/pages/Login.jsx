@@ -19,24 +19,22 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [guestLoading, setGuestLoading] = useState(false);
   const [showPwd, setShowPwd] = useState(false);
-  const isDev = import.meta.env.DEV;
 
   useEffect(() => {
     // 若已登录则直接进入
-    if (localStorage.getItem('cx_token')) nav('/console', { replace: true });
+    if (localStorage.getItem('cx_uid')) nav('/console', { replace: true });
   }, []);
 
   const go = (target) => nav(target, { replace: true });
 
   const doLogin = async (payload, target) => {
     try {
-      const { member, token } = await api.post('/auth/login', payload);
-      localStorage.setItem('cx_token', token);
+      const { member } = await api.post('/auth/login', payload);
       localStorage.setItem('cx_uid', member.id);
       localStorage.setItem('cx_enterprise', member.enterprise_id);
       localStorage.removeItem('cx_guest');
       message.success(`欢迎回来，${member.name}`);
-      go(member.role === '平台管理员' ? '/admin' : target);
+      go(target);
     } catch (e) {
       message.error(e.message);
       setLoading(false);
@@ -48,16 +46,15 @@ export default function Login() {
     await doLogin({ account: v.account.trim(), password: v.password }, '/console');
   };
 
-  const enterGuest = async (target = '/console') => {
+  const enterGuest = async () => {
     setGuestLoading(true);
     try {
-      const { member, token } = await api.post('/auth/guest');
-      localStorage.setItem('cx_token', token);
+      const { member } = await api.post('/auth/guest');
       localStorage.setItem('cx_uid', member.id);
       localStorage.setItem('cx_enterprise', member.enterprise_id);
       localStorage.setItem('cx_guest', '1');
       message.success('已进入游客体验模式（仅浏览演示数据）');
-      go(target);
+      go('/console');
     } catch (e) {
       message.error(e.message);
       setGuestLoading(false);
@@ -69,27 +66,28 @@ export default function Login() {
       setLoading(true);
       await doLogin({ userId: acc.userId }, '/console');
     } else if (acc.type === 'provider') {
-      const { member, token } = await api.post('/auth/backend', { role: '资源方运营' });
-      localStorage.setItem('cx_token', token);
-      localStorage.setItem('cx_uid', member.id);
-      localStorage.setItem('cx_enterprise', member.enterprise_id || '');
+      localStorage.setItem('cx_uid', 'u-guest');
       localStorage.setItem('cx_provider', acc.providerId);
       message.success(`已进入${acc.name}（资源方后台）`);
       go('/provider');
     } else {
-      const { member, token } = await api.post('/auth/backend', { role: '平台管理员' });
-      localStorage.setItem('cx_token', token);
-      localStorage.setItem('cx_uid', member.id);
-      localStorage.setItem('cx_enterprise', member.enterprise_id || '');
+      localStorage.setItem('cx_uid', 'u-guest');
       message.success('已进入平台管理后台');
       go('/admin');
     }
   };
 
   return (
-    <div className="cx-login">
+    <div style={{ minHeight: '100vh', display: 'flex', background: '#f5f6f8' }}>
       {/* ===== 左侧品牌区 ===== */}
-      <div className="cx-login-art">
+      <div style={{
+        flex: '1.1', minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+        padding: '48px 56px', color: '#fff', position: 'relative', overflow: 'hidden',
+        background: 'linear-gradient(150deg,#1f2d5c 0%,#2f54eb 55%,#13c2c2 130%)',
+      }}>
+        {/* 装饰圆 */}
+        <div style={{ position: 'absolute', width: 420, height: 420, borderRadius: '50%', background: 'rgba(255,255,255,.06)', top: -140, right: -120 }} />
+        <div style={{ position: 'absolute', width: 300, height: 300, borderRadius: '50%', background: 'rgba(255,255,255,.05)', bottom: -100, left: -80 }} />
 
         <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(255,255,255,.16)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>
@@ -102,35 +100,37 @@ export default function Login() {
         </div>
 
         <div style={{ position: 'relative' }}>
-          <div className="cx-eyebrow" style={{ color: '#39e58c', marginBottom: 14 }}>VERIFIED COMPUTE INFRASTRUCTURE</div>
-          <div style={{ fontSize: 38, fontWeight: 800, lineHeight: 1.25, marginBottom: 12, maxWidth: 520 }}>
-            每一份算力，<br />都有可验证的交付轨迹
+          <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.4, marginBottom: 12 }}>
+            让企业像用电一样
+            <br />
+            按需获得全球算力
           </div>
           <div style={{ fontSize: 14, opacity: .85, lineHeight: 1.8, maxWidth: 420, marginBottom: 28 }}>
-            统一资源市场、实例生命周期、精细计费、企业审批与审计证据，让算力采购从价格比较走向可信运营。
+            连接算力供给与需求 —— 资源市场、实例全生命周期管理、按秒计费、企业级审批与合规交付，一站搞定。
           </div>
           <Space size={12} wrap>
-            <Tag style={{ background: 'rgba(255,255,255,.14)', color: '#fff', border: 'none', padding: '4px 12px', borderRadius: 20 }} icon={<SafetyCertificateOutlined />}>企业级权限</Tag>
-            <Tag style={{ background: 'rgba(255,255,255,.14)', color: '#fff', border: 'none', padding: '4px 12px', borderRadius: 20 }} icon={<SafetyCertificateOutlined />}>全链路审计</Tag>
-            <Tag style={{ background: 'rgba(255,255,255,.14)', color: '#fff', border: 'none', padding: '4px 12px', borderRadius: 20 }}>分钟级交付目标</Tag>
+            <Tag style={{ background: 'rgba(255,255,255,.14)', color: '#fff', border: 'none', padding: '4px 12px', borderRadius: 20 }} icon={<SafetyCertificateOutlined />}>等保三级</Tag>
+            <Tag style={{ background: 'rgba(255,255,255,.14)', color: '#fff', border: 'none', padding: '4px 12px', borderRadius: 20 }} icon={<SafetyCertificateOutlined />}>SOC 2 Type I</Tag>
+            <Tag style={{ background: 'rgba(255,255,255,.14)', color: '#fff', border: 'none', padding: '4px 12px', borderRadius: 20 }}>可用性 99.9%</Tag>
             <Tag style={{ background: 'rgba(255,255,255,.14)', color: '#fff', border: 'none', padding: '4px 12px', borderRadius: 20 }}>数据擦除保障</Tag>
           </Space>
         </div>
 
         <div style={{ position: 'relative', fontSize: 12, opacity: .6 }}>
-          © 2026 ComputeX Technology · Trust is a measurable state
+          © 2026 ComputeX Technology · 供产品演示使用
         </div>
       </div>
 
       {/* ===== 右侧登录区 ===== */}
-      <div className="cx-login-panel">
-        <div className="cx-login-card">
+      <div style={{ flex: '1', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 48px', background: '#fff', minWidth: 480 }}>
+        <div style={{ width: '100%', maxWidth: 420 }}>
           {/* 移动端入口 */}
-          {isDev && <div style={{ position: 'absolute', top: 20, right: 24, zIndex: 1 }}>
+          <div style={{ position: 'absolute', top: 20, right: 24, zIndex: 1 }}>
             <Button size="small" type="text" icon={<MobileOutlined />} onClick={() => {
-              enterGuest('/app');
+              localStorage.setItem('cx_uid', 'u-guest'); localStorage.setItem('cx_guest', '1');
+              go('/app');
             }}>移动端 App</Button>
-          </div>}
+          </div>
 
           <div style={{ fontSize: 26, fontWeight: 800, color: '#1f2d3d' }}>欢迎回来 👋</div>
           <div style={{ color: '#7a8699', fontSize: 13, margin: '8px 0 24px' }}>登录 ComputeX 管理控制台，开始管理你的算力资源</div>
@@ -153,47 +153,45 @@ export default function Login() {
             <Button type="primary" htmlType="submit" block loading={loading} style={{ height: 44, borderRadius: 8, fontSize: 15 }}>登 录</Button>
           </Form>
 
-          {/* 生产环境安全游客入口 */}
+          {/* 游客模式 */}
           <Button
             block
             icon={<RocketOutlined />}
             loading={guestLoading}
-            onClick={() => enterGuest()}
+            onClick={enterGuest}
             style={{ height: 44, borderRadius: 8, fontSize: 14, marginTop: 12, borderColor: '#2f54eb', color: '#2f54eb', background: '#f0f5ff' }}
           >
             游客体验模式 · 无需账号密码
           </Button>
           <div style={{ textAlign: 'center', color: '#a6b0c0', fontSize: 11, marginTop: 8 }}>
-            30 分钟只读体验 · 演示租户隔离 · 不可支付、审批或修改数据
+            游客可浏览全部演示数据与界面；注册企业账号后数据相互隔离
           </div>
 
-          {isDev && <>
-            <Divider plain style={{ color: '#a6b0c0', fontSize: 12 }}>开发环境 · 角色验收</Divider>
+          <Divider plain style={{ color: '#a6b0c0', fontSize: 12 }}>演示环境 · 一键体验</Divider>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-              {DEMO_ACCOUNTS.map(a => (
-                <div
-                  key={a.key}
-                  onClick={() => quickLogin(a)}
-                  style={{
-                    border: '1px solid #eef0f4', borderRadius: 10, padding: '10px 8px', textAlign: 'center', cursor: 'pointer',
-                    transition: 'all .2s', background: '#fff',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.borderColor = a.color, e.currentTarget.style.boxShadow = `0 4px 12px rgba(0,0,0,.06)`)}
-                  onMouseLeave={e => (e.currentTarget.style.borderColor = '#eef0f4', e.currentTarget.style.boxShadow = 'none')}
-                >
-                  <div style={{ width: 34, height: 34, borderRadius: '50%', background: a.color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, margin: '0 auto 6px', fontSize: 13 }}>
-                    {a.name[0]}
-                  </div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: '#1f2d3d' }}>{a.name}</div>
-                  <div style={{ fontSize: 10, color: '#7a8699' }}>{a.role}</div>
-                  <Tag style={{ fontSize: 9, marginTop: 4, padding: '0 6px' }} color={a.type === 'console' ? 'blue' : a.type === 'provider' ? 'cyan' : 'red'}>
-                    {a.type === 'console' ? '控制台' : a.type === 'provider' ? '资源方' : '平台'}
-                  </Tag>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+            {DEMO_ACCOUNTS.map(a => (
+              <div
+                key={a.key}
+                onClick={() => quickLogin(a)}
+                style={{
+                  border: '1px solid #eef0f4', borderRadius: 10, padding: '10px 8px', textAlign: 'center', cursor: 'pointer',
+                  transition: 'all .2s', background: '#fff',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.borderColor = a.color, e.currentTarget.style.boxShadow = `0 4px 12px rgba(0,0,0,.06)`)}
+                onMouseLeave={e => (e.currentTarget.style.borderColor = '#eef0f4', e.currentTarget.style.boxShadow = 'none')}
+              >
+                <div style={{ width: 34, height: 34, borderRadius: '50%', background: a.color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, margin: '0 auto 6px', fontSize: 13 }}>
+                  {a.name[0]}
                 </div>
-              ))}
-            </div>
-          </>}
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#1f2d3d' }}>{a.name}</div>
+                <div style={{ fontSize: 10, color: '#7a8699' }}>{a.role}</div>
+                <Tag style={{ fontSize: 9, marginTop: 4, padding: '0 6px' }} color={a.type === 'console' ? 'blue' : a.type === 'provider' ? 'cyan' : 'red'}>
+                  {a.type === 'console' ? '控制台' : a.type === 'provider' ? '资源方' : '平台'}
+                </Tag>
+              </div>
+            ))}
+          </div>
 
           <div style={{ textAlign: 'center', color: '#a6b0c0', fontSize: 11, marginTop: 20 }}>
             登录即代表同意 <a>《服务条款》</a> 与 <a>《隐私政策》</a> · 新用户可联系管理员开通企业账号

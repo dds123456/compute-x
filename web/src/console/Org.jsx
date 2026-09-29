@@ -3,7 +3,6 @@ import { Card, Table, Tag, Button, Space, Modal, Form, Input, Select, message, P
 import { PlusOutlined, SwapOutlined, DownloadOutlined, UserAddOutlined } from '@ant-design/icons';
 import api from '../api.js';
 import { fmtMoney, STATUS_COLOR } from '../api.js';
-import { downloadCsv } from '../utils/download.js';
 
 const ROLE_COLOR = { '企业管理员': 'blue', 财务: 'purple', 项目负责人: 'geekblue', 工程师: 'green', 只读成员: 'default' };
 
@@ -63,12 +62,6 @@ export default function Org({ me, tab = 'members' }) {
   };
 
   const isAdmin = me?.role === '企业管理员';
-  const exportAudit = () => {
-    downloadCsv(`ComputeX-审计日志-${new Date().toISOString().slice(0, 10)}.csv`, audit, [
-      ['时间', 'created_at'], ['操作者', 'user_name'], ['用户ID', 'user_id'], ['操作', 'action'], ['对象', 'target'],
-    ]);
-    message.success('审计日志已导出');
-  };
 
   const tabs = [
     { key: 'members', label: '成员管理' },
@@ -86,7 +79,7 @@ export default function Org({ me, tab = 'members' }) {
         ) : active === 'projects' ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setProjOpen(true)}>创建项目</Button>
         ) : (
-          <Button icon={<DownloadOutlined />} onClick={exportAudit}>导出日志</Button>
+          <Button icon={<DownloadOutlined />} onClick={() => message.success('审计日志已导出（演示）')}>导出日志</Button>
         )}>
         {active === 'members' && (
           <Table rowKey="id" dataSource={members} pagination={false} columns={[

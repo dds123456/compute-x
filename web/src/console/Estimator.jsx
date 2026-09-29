@@ -3,7 +3,6 @@ import { Card, Form, Select, InputNumber, Button, Table, Tag, Space, Result, mes
 import { CalculatorOutlined, DownloadOutlined } from '@ant-design/icons';
 import api from '../api.js';
 import { fmtMoney } from '../api.js';
-import { downloadCsv } from '../utils/download.js';
 
 export default function Estimator() {
   const [result, setResult] = useState(null);
@@ -15,13 +14,6 @@ export default function Estimator() {
       const { range, recommendations } = await api.post('/market/estimate', v);
       setResult({ ...v, range, recommendations });
     } catch (e) { message.error(e.message); } finally { setLoading(false); }
-  };
-  const exportReport = () => {
-    downloadCsv(`ComputeX-成本估算-${new Date().toISOString().slice(0, 10)}.csv`, result.recommendations, [
-      ['任务类型', () => result.taskType], ['卡数', () => result.cards], ['预计时长(小时)', () => result.hours], ['数据规模(GB)', () => result.dataSize],
-      ['资源规格', 'spec'], ['GPU', 'gpu_model'], ['地域', 'region'], ['节点数', 'nodeCount'], ['时价', 'price_hour'], ['存储费', 'storageCost'], ['带宽费', 'bwCost'], ['预估总费用', 'estimate'],
-    ]);
-    message.success('估算报告已导出');
   };
 
   return (
@@ -48,7 +40,7 @@ export default function Estimator() {
             title={`预估费用区间：¥${fmtMoney(result.range[0])} ～ ¥${fmtMoney(result.range[1])}`}
             subTitle="含资源租赁 + 存储（0.1元/GB/小时）+ 带宽（0.5元/GB）；与真实计费口径误差 ≤5%"
             extra={[
-              <Button key="dl" icon={<DownloadOutlined />} onClick={exportReport}>导出估算报告</Button>,
+              <Button key="dl" icon={<DownloadOutlined />} onClick={() => message.success('估算报告已导出 CSV（演示）')}>导出估算报告</Button>,
             ]}
           />
           <Table rowKey="id" size="small" dataSource={result.recommendations} pagination={false}

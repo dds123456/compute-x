@@ -5,7 +5,6 @@ import {
   HomeOutlined, CloudServerOutlined, FileTextOutlined, UserOutlined, BellOutlined,
   ArrowLeftOutlined, ThunderboltOutlined, WalletOutlined, AuditOutlined, AlertOutlined,
   PoweroffOutlined, SyncOutlined, DollarOutlined, DeleteOutlined, CheckCircleOutlined, CloseCircleOutlined,
-  MessageOutlined, SettingOutlined, SendOutlined, PlusOutlined,
 } from '@ant-design/icons';
 import api, { fmtMoney, STATUS_COLOR } from '../api.js';
 
@@ -14,7 +13,7 @@ export default function AppLayout() {
   const loc = useLocation();
   const [me, setMe] = useState(null);
   const [unread, setUnread] = useState(0);
-  const [tab, setTab] = useState(loc.pathname.startsWith('/app/instances') ? 'instances' : loc.pathname.startsWith('/app/bills') ? 'bills' : loc.pathname.startsWith('/app/me') ? 'me' : 'home');
+  const [tab, setTab] = useState(loc.pathname.startsWith('/app/instances') ? 'inst' : loc.pathname.startsWith('/app/bills') ? 'bill' : loc.pathname.startsWith('/app/me') ? 'me' : 'home');
 
   useEffect(() => {
     api.get('/auth/me').then(({ member }) => setMe(member));
@@ -32,14 +31,14 @@ export default function AppLayout() {
 
   // 手机模拟外壳
   return (
-    <div className="cx-phone-stage" style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', padding: 16 }}>
-      <div className="cx-phone" style={{ width: 420, maxWidth: '100%', borderRadius: 28, overflow: 'hidden', position: 'relative', minHeight: 'calc(100vh - 32px)' }}>
+    <div style={{ minHeight: '100vh', background: '#e8ecf3', display: 'flex', justifyContent: 'center', padding: 16 }}>
+      <div style={{ width: 400, maxWidth: '100%', background: '#f5f6f8', borderRadius: 28, overflow: 'hidden', boxShadow: '0 12px 48px rgba(0,0,0,.18)', position: 'relative', minHeight: 'calc(100vh - 32px)' }}>
         <div style={{ height: 44, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#a6b0c0', borderBottom: '1px solid #eef0f4' }}>
           {loc.pathname === '/app' ? 'ComputeX · 移动端协同' : 'ComputeX'}
         </div>
 
         {/* 顶部栏：企业名 + 铃铛 */}
-        <div className="cx-phone-hero" style={{ color: '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ background: 'linear-gradient(135deg,#2f54eb,#13c2c2)', color: '#fff', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: 15 }}>{me?.name || ''} · {me?.role || ''}</div>
             <div style={{ fontSize: 11, opacity: .85 }}>星云智能科技有限公司</div>
@@ -56,20 +55,16 @@ export default function AppLayout() {
             <Route path="instances/:id" element={<InstDetail nav={nav} />} />
             <Route path="bills" element={<Bills nav={nav} />} />
             <Route path="bills/:id" element={<BillDetail nav={nav} />} />
-            <Route path="invoices" element={<AppInvoices nav={nav} />} />
             <Route path="me" element={<Me me={me} nav={nav} />} />
-            <Route path="preferences" element={<Preferences nav={nav} />} />
             <Route path="messages" element={<Messages nav={nav} />} />
             <Route path="approvals" element={<Approvals nav={nav} />} />
             <Route path="members" element={<Members nav={nav} />} />
-            <Route path="tickets" element={<TicketList nav={nav} />} />
             <Route path="tickets/new" element={<NewTicket nav={nav} />} />
-            <Route path="tickets/:id" element={<AppTicketDetail nav={nav} />} />
           </Routes>
         </div>
 
         {/* 底部 Tab */}
-        <div className="cx-app-tabs" style={{ background: '#fff', borderTop: '1px solid #dce6e1', display: 'flex', padding: '6px 0', paddingBottom: 10 }}>
+        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: '#fff', borderTop: '1px solid #eef0f4', display: 'flex', padding: '6px 0', paddingBottom: 10 }}>
           {tabs.map(t => (
             <div key={t.key} onClick={() => goto(t.key)} style={{ flex: 1, textAlign: 'center', cursor: 'pointer', color: tab === t.key ? '#2f54eb' : '#a6b0c0' }}>
               <div style={{ fontSize: 20 }}>{t.icon}</div>
@@ -85,10 +80,8 @@ export default function AppLayout() {
 // ============ 工作台 ============
 function Home({ me, nav }) {
   const [data, setData] = useState(null);
-  const [alerts, setAlerts] = useState([]);
   useEffect(() => {
     api.get('/dashboard/overview', { params: { enterpriseId: localStorage.getItem('cx_enterprise') } }).then(({ overview }) => setData(overview));
-    api.get('/notify/alerts').then(({ alerts }) => setAlerts(alerts || [])).catch(() => {});
   }, []);
   if (!data) return <Spin style={{ display: 'block', margin: '60px auto' }} />;
 
@@ -140,10 +133,14 @@ function Home({ me, nav }) {
 
       {/* 告警动态卡 */}
       <Card size="small" style={{ borderRadius: 12, marginBottom: 12 }} title={<Space><AlertOutlined style={{ color: '#f5222d' }} />告警动态</Space>}>
-        {alerts.length ? (
-          <List size="small" dataSource={alerts} renderItem={x => (
+        {data.unreadAlerts > 0 ? (
+          <List size="small" dataSource={[
+            { t: '实例告警', i: 'test-l40s-sandbox', time: '14:20' },
+            { t: '过载提醒', i: 'llm-train-a100-01', time: '13:00' },
+            { t: '到期提醒', i: 'llm-train-4090-01', time: '18:00' },
+          ].slice(0, data.unreadAlerts)} renderItem={x => (
             <List.Item style={{ padding: '6px 0' }} onClick={() => nav('/app/instances')}>
-              <Space><Tag color={x.level === '严重' ? 'red' : x.level === '警告' ? 'orange' : 'blue'}>{x.type}</Tag><span style={{ fontSize: 13 }}>{x.instance_name}</span><span style={{ fontSize: 11, color: '#a6b0c0' }}>{x.triggered_at?.slice(11, 16)}</span></Space>
+              <Space><Tag color="red">{x.t}</Tag><span style={{ fontSize: 13 }}>{x.i}</span><span style={{ fontSize: 11, color: '#a6b0c0' }}>{x.time}</span></Space>
             </List.Item>
           )} />
         ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无告警" />}
@@ -153,7 +150,7 @@ function Home({ me, nav }) {
       <Card size="small" style={{ borderRadius: 12 }} title="快捷操作">
         <Space direction="vertical" style={{ width: '100%' }}>
           <Button block icon={<DollarOutlined />} onClick={() => nav('/app/bills')}>立即续费</Button>
-          <Button block icon={<FileTextOutlined />} onClick={() => nav('/app/invoices')}>申请开票</Button>
+          <Button block icon={<FileTextOutlined />} onClick={() => message.success('开票入口（演示，Web 端可完整操作）')}>申请开票</Button>
           <Button block icon={<BellOutlined />} onClick={() => nav('/app/tickets/new')}>联系客服（新建工单）</Button>
         </Space>
       </Card>
@@ -358,8 +355,8 @@ function Me({ me, nav }) {
           { icon: <UserOutlined />, label: '成员管理', onlyAdmin: true, to: '/app/members' },
           { icon: <BellOutlined />, label: '消息中心', to: '/app/messages' },
           { icon: <AuditOutlined />, label: '待办审批', to: '/app/approvals' },
-          { icon: <SettingOutlined />, label: '通知偏好设置', to: '/app/preferences' },
-          { icon: <MessageOutlined />, label: '工单与客服', to: '/app/tickets' },
+          { icon: <FileTextOutlined />, label: '通知偏好设置', onClick: () => message.info('通知偏好（演示）') },
+          { icon: <ThunderboltOutlined />, label: '帮助与客服', to: '/app/tickets/new' },
           { icon: <ArrowLeftOutlined />, label: '返回 Web 管理台', to: '/console' },
         ].filter(x => !x.onlyAdmin || me?.role === '企业管理员').map(x => (
           <div key={x.label} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid #f0f1f5', cursor: 'pointer', fontSize: 14 }} onClick={() => (x.to ? nav(x.to) : x.onClick?.())}>
@@ -367,7 +364,7 @@ function Me({ me, nav }) {
           </div>
         ))}
       </Card>
-      <Button block danger onClick={async () => { try { await api.post('/auth/logout'); } finally { ['cx_token', 'cx_uid', 'cx_enterprise', 'cx_guest', 'cx_provider'].forEach(k => localStorage.removeItem(k)); nav('/login'); } }} style={{ borderRadius: 10 }}>退出登录</Button>
+      <Button block danger onClick={() => { localStorage.removeItem('cx_uid'); nav('/login'); }} style={{ borderRadius: 10 }}>退出登录</Button>
     </div>
   );
 }
@@ -461,7 +458,7 @@ function NewTicket({ nav }) {
     const v = await form.validateFields();
     await api.post('/tickets/tickets', { enterpriseId: localStorage.getItem('cx_enterprise'), userId: localStorage.getItem('cx_uid'), type: v.type, content: v.content });
     message.success('工单已提交，将在 SLA 内响应');
-    nav('/app/tickets');
+    nav('/app/me');
   };
   return (
     <div style={{ padding: 12 }}>
@@ -474,92 +471,7 @@ function NewTicket({ nav }) {
           <Button type="primary" block onClick={submit}>提交工单</Button>
         </Form>
       </Card>
-      <Button block style={{ marginTop: 8, borderRadius: 10 }} icon={<ArrowLeftOutlined />} onClick={() => nav('/app/tickets')}>返回</Button>
+      <Button block style={{ marginTop: 8, borderRadius: 10 }} icon={<ArrowLeftOutlined />} onClick={() => nav('/app/me')}>返回</Button>
     </div>
   );
-}
-
-// ============ 移动端开票 ============
-function AppInvoices({ nav }) {
-  const [list, setList] = useState([]);
-  const [bills, setBills] = useState([]);
-  const [open, setOpen] = useState(false);
-  const [form] = Form.useForm();
-  const load = () => {
-    api.get('/billing/invoices', { params: { enterpriseId: localStorage.getItem('cx_enterprise') } }).then(({ invoices }) => setList(invoices));
-    api.get('/billing/bills', { params: { enterpriseId: localStorage.getItem('cx_enterprise') } }).then(({ bills }) => setBills(bills.filter(b => b.invoice_status === '未开票')));
-  };
-  useEffect(load, []);
-  const submit = async () => {
-    const values = await form.validateFields();
-    const { enterprise } = await api.get('/auth/me');
-    await api.post('/billing/invoices', { enterpriseId: enterprise.id, ...values });
-    message.success('开票申请已提交');
-    setOpen(false);
-    load();
-  };
-  return <div style={{ padding: 12 }}>
-    <Button block type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)} disabled={!bills.length} style={{ marginBottom: 12 }}>申请开票</Button>
-    {!list.length ? <Empty description="暂无开票记录" /> : list.map(inv => <Card key={inv.id} size="small" style={{ borderRadius: 12, marginBottom: 10 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}><b>{inv.invoice_no}</b><Tag color={STATUS_COLOR[inv.status]}>{inv.status}</Tag></div>
-      <div style={{ color: '#667a71', fontSize: 12, marginTop: 6 }}>{inv.type} · {inv.title}</div>
-      <div style={{ fontSize: 20, fontWeight: 700, marginTop: 6 }}>¥{fmtMoney(inv.amount)}</div>
-    </Card>)}
-    <Button block icon={<ArrowLeftOutlined />} onClick={() => nav('/app/bills')}>返回账单</Button>
-    <Modal title="申请开票" open={open} onCancel={() => setOpen(false)} onOk={submit} destroyOnClose>
-      <Form form={form} layout="vertical" initialValues={{ type: '电子普票' }}>
-        <Form.Item name="billIds" label="待开票账单" rules={[{ required: true }]}><Select mode="multiple" options={bills.map(b => ({ value: b.id, label: `${b.bill_no} · ¥${fmtMoney(b.amount)}` }))} /></Form.Item>
-        <Form.Item name="type" label="发票类型" rules={[{ required: true }]}><Select options={['电子普票', '增值税专票'].map(v => ({ value: v, label: v }))} /></Form.Item>
-        <Form.Item name="title" label="发票抬头" rules={[{ required: true }]}><Input /></Form.Item>
-        <Form.Item name="taxNo" label="纳税人识别号" rules={[{ required: true }]}><Input /></Form.Item>
-        <Form.Item name="email" label="接收邮箱" rules={[{ required: true, type: 'email' }]}><Input /></Form.Item>
-      </Form>
-    </Modal>
-  </div>;
-}
-
-// ============ 通知偏好 ============
-function Preferences({ nav }) {
-  const [data, setData] = useState(null);
-  useEffect(() => { api.get('/notify/preferences').then(({ preferences }) => setData(preferences)); }, []);
-  const save = async () => { const { msg } = await api.post('/notify/preferences', data); message.success(msg); };
-  if (!data) return <Spin style={{ display: 'block', margin: '60px auto' }} />;
-  const options = [['email', '邮件通知'], ['app_push', 'App 推送'], ['approval', '审批待办与结果'], ['billing', '账单与工单进展'], ['marketing', '产品动态与活动']];
-  return <div style={{ padding: 12 }}><Card size="small" title="通知偏好" style={{ borderRadius: 12 }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #e5ece8' }}><span>故障、资损与安全告警</span><Switch checked disabled /></div>
-    {options.map(([key, label]) => <div key={key} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #e5ece8' }}><span>{label}</span><Switch checked={Boolean(data[key])} onChange={v => setData(p => ({ ...p, [key]: v }))} /></div>)}
-    <Button type="primary" block onClick={save} style={{ marginTop: 12 }}>保存设置</Button>
-  </Card><Button block icon={<ArrowLeftOutlined />} style={{ marginTop: 8 }} onClick={() => nav('/app/me')}>返回</Button></div>;
-}
-
-// ============ 移动端工单 ============
-function TicketList({ nav }) {
-  const [list, setList] = useState([]);
-  useEffect(() => { api.get('/tickets/tickets', { params: { enterpriseId: localStorage.getItem('cx_enterprise') } }).then(({ tickets }) => setList(tickets)); }, []);
-  return <div style={{ padding: 12 }}><Button block type="primary" icon={<PlusOutlined />} onClick={() => nav('/app/tickets/new')} style={{ marginBottom: 12 }}>新建工单</Button>
-    {!list.length ? <Empty description="暂无工单" /> : list.map(t => <Card key={t.id} size="small" style={{ borderRadius: 12, marginBottom: 10 }} onClick={() => nav(`/app/tickets/${t.id}`)}>
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}><b>{t.ticket_no}</b><Tag color={STATUS_COLOR[t.status]}>{t.status}</Tag></div>
-      <div style={{ fontSize: 12, color: '#667a71', marginTop: 6 }}>{t.type} · {t.content}</div>
-      <div style={{ fontSize: 11, color: '#8da097', marginTop: 5 }}>SLA：{t.sla_at}</div>
-    </Card>)}<Button block icon={<ArrowLeftOutlined />} onClick={() => nav('/app/me')}>返回</Button></div>;
-}
-
-function AppTicketDetail({ nav }) {
-  const id = window.location.pathname.split('/').pop();
-  const [ticket, setTicket] = useState(null);
-  const [reply, setReply] = useState('');
-  const load = () => api.get(`/tickets/tickets/${id}`).then(({ ticket }) => setTicket(ticket));
-  useEffect(load, [id]);
-  const send = async () => {
-    if (!reply.trim()) return;
-    await api.post(`/tickets/tickets/${id}/reply`, { content: reply.trim(), who: '移动端用户' });
-    setReply(''); load(); message.success('回复已发送');
-  };
-  if (!ticket) return <Spin style={{ display: 'block', margin: '60px auto' }} />;
-  return <div style={{ padding: 12 }}><Card size="small" style={{ borderRadius: 12, marginBottom: 10 }}>
-    <Space><Tag>{ticket.type}</Tag><Tag color={STATUS_COLOR[ticket.status]}>{ticket.status}</Tag></Space><h3>{ticket.ticket_no}</h3><p>{ticket.content}</p>
-  </Card><Card size="small" title="处理记录" style={{ borderRadius: 12, marginBottom: 10 }}>
-    {(ticket.replies || []).map((r, index) => <div key={index} style={{ padding: '8px 0', borderBottom: '1px solid #e5ece8' }}><b>{r.who}</b><div>{r.msg}</div><small style={{ color: '#8da097' }}>{r.at}</small></div>)}
-    <Space.Compact style={{ width: '100%', marginTop: 10 }}><Input value={reply} onChange={e => setReply(e.target.value)} placeholder="补充说明" /><Button type="primary" icon={<SendOutlined />} onClick={send} /></Space.Compact>
-  </Card><Button block icon={<ArrowLeftOutlined />} onClick={() => nav('/app/tickets')}>返回</Button></div>;
 }

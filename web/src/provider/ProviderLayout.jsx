@@ -71,7 +71,7 @@ export default function ProviderLayout() {
       <Layout>
         <Header style={{ background: '#fff', padding: '0 24px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #eef0f4' }}>
           <div style={{ fontSize: 16, fontWeight: 600 }}>资源方后台 · {menuItems.find(m => m.key === tab)?.label}</div>
-          <Dropdown menu={{ items: [{ key: 'logout', label: '退出登录', onClick: async () => { try { await api.post('/auth/logout'); } finally { ['cx_token', 'cx_uid', 'cx_enterprise', 'cx_guest', 'cx_provider'].forEach(k => localStorage.removeItem(k)); nav('/login'); } } }] }}>
+          <Dropdown menu={{ items: [{ key: 'logout', label: '退出登录', onClick: () => { localStorage.removeItem('cx_provider'); nav('/login'); } }] }}>
             <Space style={{ cursor: 'pointer' }}><Avatar style={{ background: '#13c2c2' }}>华</Avatar>华东智算中心</Space>
           </Dropdown>
         </Header>

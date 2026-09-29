@@ -70,19 +70,10 @@ export function transitionInstance(id, action) {
       if (!['运行中', '异常'].includes(inst.status)) return { ok: false, msg: '当前状态不可重启' };
       db.prepare(`UPDATE instances SET status='运行中' WHERE id=?`).run(id);
       break;
-    case '续费': {
-      // 按计费方式计算 7 天费用并真实扣减余额
-      const unitPrice = inst.billing_type === '包日' ? (inst.price_hour * 24) : inst.billing_type === '包月' ? (inst.price_hour * 720) : inst.price_hour;
-      const fee = Math.round(unitPrice * 7 * 100) / 100;
-      const ent = db.prepare('SELECT balance FROM enterprises WHERE id = ?').get(inst.enterprise_id);
-      if (!ent || ent.balance < fee) return { ok: false, msg: `余额不足（续费需 ${fee} 元），请先充值` };
-      db.prepare('UPDATE enterprises SET balance = balance - ? WHERE id = ?').run(fee, inst.enterprise_id);
+    case '续费':
       db.prepare(`UPDATE instances SET status='运行中', expires_at=datetime(expires_at,'+7 days') WHERE id=?`).run(id);
-      db.prepare(`INSERT INTO audit_logs (enterprise_id,user_id,user_name,action,target,created_at) VALUES (?,?,?,?,?,?)`)
-        .run(inst.enterprise_id, inst.member_id, '系统', '续费实例', `${inst.name}（扣费 ${fee} 元）`, t);
-      notifyByProject(inst, '账单', '续费成功', `${inst.name} 续费成功，扣费 ${fee} 元，到期时间顺延 7 天`);
+      notifyByProject(inst, '账单', '续费成功', `${inst.name} 续费成功，到期时间顺延 7 天`);
       break;
-    }
     case '释放': {
       db.prepare(`UPDATE instances SET status='释放中' WHERE id=?`).run(id);
       setTimeout(() => {

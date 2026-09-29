@@ -6,15 +6,13 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "test": "node --test"
+    "dev": "node --watch src/index.js"
   },
   "engines": {
     "node": ">=23.4.0"
   },
   "dependencies": {
-    "ai": "^7.0.79",
-    "cors": "^2.8.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "cors": "^2.8.5"
   }
 }

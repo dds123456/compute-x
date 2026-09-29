@@ -3,7 +3,6 @@ import { Card, Table, Tag, Button, Space, Modal, Form, Input, Select, message, P
 import { PlusOutlined, SwapOutlined, DownloadOutlined } from '@ant-design/icons';
 import api from '../api.js';
 import { fmtMoney, STATUS_COLOR } from '../api.js';
-import { printInvoiceReceipt } from '../utils/download.js';
 
 export default function Invoices() {
   const [list, setList] = useState([]);
@@ -27,6 +26,12 @@ export default function Invoices() {
     });
     message.success(msg);
     setOpen(false);
+    load();
+  };
+
+  const advance = async (inv) => {
+    const { status } = await api.post(`/billing/invoices/${inv.id}/advance`);
+    message.success(`开票进度：${status}（演示模拟推进）`);
     load();
   };
 
@@ -58,7 +63,8 @@ export default function Invoices() {
           { title: '申请时间', dataIndex: 'created_at', width: 160, render: v => <span style={{ fontSize: 12 }}>{v}</span> },
           { title: '操作', key: 'op', width: 180, render: (_, inv) => (
             <Space>
-              <Button size="small" icon={<DownloadOutlined />} onClick={() => { try { printInvoiceReceipt(inv); } catch (e) { message.error(e.message); } }}>查看凭证</Button>
+              {inv.status !== '已开具' && <Button size="small" onClick={() => advance(inv)}>推进进度</Button>}
+              {inv.status === '已开具' && <Button size="small" icon={<DownloadOutlined />} onClick={() => message.success('发票已下载（演示）')}>下载</Button>}
             </Space>
           )},
         ]} />
