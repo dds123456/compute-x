@@ -1,6 +1,7 @@
 // ComputeX 算力租赁平台 - API 服务入口
 import express from 'express';
 import cors from 'cors';
+import { fileURLToPath } from 'node:url';
 import './db.js';
 
 import auth from './routes/auth.js';
@@ -13,6 +14,10 @@ import notifications from './routes/notifications.js';
 import provider from './routes/provider.js';
 import admin from './routes/admin.js';
 import dashboard from './routes/dashboard.js';
+import advisor from './routes/advisor.js';
+import approvalsV3 from './routes/approvals-v3.js';
+import finops from './routes/finops.js';
+import { authenticateApi } from './security.js';
 
 const app = express();
 app.use(cors());
@@ -34,6 +39,9 @@ app.use('/api/notify', notifications);
 app.use('/api/provider', provider);
 app.use('/api/admin', admin);
 app.use('/api/dashboard', dashboard);
+app.use('/api/advisor', authenticateApi, advisor);
+app.use('/api/approvals-v3', authenticateApi, approvalsV3);
+app.use('/api/finops', authenticateApi, finops);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'ComputeX API', time: new Date().toISOString() }));
 
@@ -43,8 +51,11 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ ok: false, msg: err.message || '服务器内部错误' });
 });
 
+export default app;
+
 const PORT = process.env.PORT || 8787;
-app.listen(PORT, () => {
+// 仅直接运行时监听端口（npm start / node src/index.js）；被 api/index.js 或测试 import 时不监听
+if (process.argv[1] === fileURLToPath(import.meta.url)) app.listen(PORT, () => {
   console.log(`\n══════════════════════════════════════`);
   console.log(`  ComputeX 算力租赁平台 API 已启动`);
   console.log(`  地址: http://localhost:${PORT}/api/health`);
