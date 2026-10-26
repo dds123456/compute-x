@@ -42,7 +42,7 @@ export default function ConsoleLayout() {
     api.get('/auth/unread').then(({ count }) => setUnread(count));
   }, []);
 
-  const logout = () => { localStorage.removeItem('cx_uid'); nav('/login'); };
+  const logout = () => { localStorage.removeItem('cx_uid'); localStorage.removeItem('cx_token'); nav('/login'); };
 
   const menuItems = [
     { key: '/console', icon: <DashboardOutlined />, label: '概览' },
@@ -143,7 +143,7 @@ export default function ConsoleLayout() {
               icon={<RocketOutlined />}
               message="游客体验模式"
               description="当前为游客访问（无需账号密码），可浏览全部演示数据与界面。注册企业账号后，你的实例、账单与项目将相互隔离。"
-              action={<Button size="small" type="primary" onClick={() => { localStorage.removeItem('cx_uid'); localStorage.removeItem('cx_guest'); nav('/login'); }}>登录 / 注册</Button>}
+              action={<Button size="small" type="primary" onClick={() => { localStorage.removeItem('cx_uid'); localStorage.removeItem('cx_guest'); localStorage.removeItem('cx_token'); nav('/login'); }}>登录 / 注册</Button>}
             />
           )}
           <Routes>

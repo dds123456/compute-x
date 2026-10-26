@@ -5,6 +5,8 @@ const api = axios.create({ baseURL: '/api' });
 api.interceptors.request.use((cfg) => {
   const uid = localStorage.getItem('cx_uid');
   if (uid) cfg.headers['X-User-Id'] = uid;
+  const token = localStorage.getItem('cx_token');
+  if (token) cfg.headers['Authorization'] = `Bearer ${token}`;
   return cfg;
 });
 

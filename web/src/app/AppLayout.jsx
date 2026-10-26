@@ -364,7 +364,7 @@ function Me({ me, nav }) {
           </div>
         ))}
       </Card>
-      <Button block danger onClick={() => { localStorage.removeItem('cx_uid'); nav('/login'); }} style={{ borderRadius: 10 }}>退出登录</Button>
+      <Button block danger onClick={() => { localStorage.removeItem('cx_uid'); localStorage.removeItem('cx_token'); nav('/login'); }} style={{ borderRadius: 10 }}>退出登录</Button>
     </div>
   );
 }

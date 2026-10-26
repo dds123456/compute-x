@@ -29,9 +29,10 @@ export default function Login() {
 
   const doLogin = async (payload, target) => {
     try {
-      const { member } = await api.post('/auth/login', payload);
+      const { member, token } = await api.post('/auth/login', payload);
       localStorage.setItem('cx_uid', member.id);
       localStorage.setItem('cx_enterprise', member.enterprise_id);
+      localStorage.setItem('cx_token', token);
       localStorage.removeItem('cx_guest');
       message.success(`欢迎回来，${member.name}`);
       go(target);
@@ -49,10 +50,11 @@ export default function Login() {
   const enterGuest = async () => {
     setGuestLoading(true);
     try {
-      const { member } = await api.post('/auth/guest');
+      const { member, token } = await api.post('/auth/guest');
       localStorage.setItem('cx_uid', member.id);
       localStorage.setItem('cx_enterprise', member.enterprise_id);
       localStorage.setItem('cx_guest', '1');
+      localStorage.setItem('cx_token', token);
       message.success('已进入游客体验模式（仅浏览演示数据）');
       go('/console');
     } catch (e) {
@@ -67,11 +69,13 @@ export default function Login() {
       await doLogin({ userId: acc.userId }, '/console');
     } else if (acc.type === 'provider') {
       localStorage.setItem('cx_uid', 'u-guest');
+      localStorage.removeItem('cx_token');
       localStorage.setItem('cx_provider', acc.providerId);
       message.success(`已进入${acc.name}（资源方后台）`);
       go('/provider');
     } else {
       localStorage.setItem('cx_uid', 'u-guest');
+      localStorage.removeItem('cx_token');
       message.success('已进入平台管理后台');
       go('/admin');
     }
@@ -127,7 +131,7 @@ export default function Login() {
           {/* 移动端入口 */}
           <div style={{ position: 'absolute', top: 20, right: 24, zIndex: 1 }}>
             <Button size="small" type="text" icon={<MobileOutlined />} onClick={() => {
-              localStorage.setItem('cx_uid', 'u-guest'); localStorage.setItem('cx_guest', '1');
+              localStorage.setItem('cx_uid', 'u-guest'); localStorage.setItem('cx_guest', '1'); localStorage.removeItem('cx_token');
               go('/app');
             }}>移动端 App</Button>
           </div>

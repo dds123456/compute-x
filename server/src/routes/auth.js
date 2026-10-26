@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../db.js';
 import { now, genId } from '../utils.js';
+import { createGuestSession, createSession, revokeSession, safeMember } from '../security.js';
 
 const r = Router();
 
@@ -20,7 +21,8 @@ r.post('/login', (req, res) => {
     return res.status(401).json({ ok: false, msg: '密码错误，请重试' });
   }
   const ent = db.prepare('SELECT * FROM enterprises WHERE id = ?').get(member.enterprise_id);
-  res.json({ ok: true, token: member.id, member, enterprise: ent, isGuest: 0 });
+  const session = createSession(member.id);
+  res.json({ ok: true, token: session.token, expiresAt: session.expiresAt, member: safeMember(member), enterprise: ent, isGuest: 0 });
 });
 
 // 游客模式：无需账号密码，一键进入（只读成员身份 + 游客标记）
@@ -32,7 +34,15 @@ r.post('/guest', (_req, res) => {
     guest = db.prepare("SELECT * FROM members WHERE id = 'u-guest'").get();
   }
   const ent = db.prepare('SELECT * FROM enterprises WHERE id = ?').get(guest.enterprise_id);
-  res.json({ ok: true, token: guest.id, member: { ...guest, is_guest: 1 }, enterprise: ent, isGuest: 1 });
+  const session = createGuestSession();
+  res.json({ ok: true, token: session.token, expiresAt: session.expiresAt, member: { ...safeMember(guest), is_guest: 1 }, enterprise: ent, isGuest: 1 });
+});
+
+// 登出：撤销当前 Bearer 会话（游客令牌为无状态签名令牌，无服务端记录）
+r.post('/logout', (req, res) => {
+  const header = req.headers.authorization || '';
+  revokeSession(header.startsWith('Bearer ') ? header.slice(7).trim() : '');
+  res.json({ ok: true });
 });
 
 // 当前登录信息
