@@ -13,6 +13,12 @@ api.interceptors.request.use((cfg) => {
 api.interceptors.response.use(
   (res) => res.data,
   (err) => {
+    // 会话过期或被撤销：清除本地身份并回到登录页（登录页自身的 401 由表单提示）
+    if (err.response?.status === 401 && !window.location.pathname.startsWith('/login')) {
+      localStorage.removeItem('cx_uid');
+      localStorage.removeItem('cx_token');
+      window.location.assign('/login');
+    }
     const msg = err.response?.data?.msg || err.message || '网络异常';
     return Promise.reject(new Error(msg));
   }

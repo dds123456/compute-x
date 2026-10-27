@@ -63,21 +63,43 @@ export default function Login() {
     }
   };
 
+  // 后台一键进入：向后端申请对应角色的演示会话，保存令牌后再跳转
+  const enterBackend = async (role, target, successText, providerId) => {
+    try {
+      const { member, token } = await api.post('/auth/backend', { role });
+      localStorage.setItem('cx_uid', member.id);
+      localStorage.setItem('cx_token', token);
+      localStorage.removeItem('cx_guest');
+      if (providerId) localStorage.setItem('cx_provider', providerId);
+      message.success(successText);
+      go(target);
+    } catch (e) {
+      message.error(e.message);
+    }
+  };
+
+  // 移动端 App：以游客会话进入，只读演示数据
+  const enterApp = async () => {
+    try {
+      const { member, token } = await api.post('/auth/guest');
+      localStorage.setItem('cx_uid', member.id);
+      localStorage.setItem('cx_enterprise', member.enterprise_id);
+      localStorage.setItem('cx_guest', '1');
+      localStorage.setItem('cx_token', token);
+      go('/app');
+    } catch (e) {
+      message.error(e.message);
+    }
+  };
+
   const quickLogin = async (acc) => {
     if (acc.type === 'console') {
       setLoading(true);
       await doLogin({ userId: acc.userId }, '/console');
     } else if (acc.type === 'provider') {
-      localStorage.setItem('cx_uid', 'u-guest');
-      localStorage.removeItem('cx_token');
-      localStorage.setItem('cx_provider', acc.providerId);
-      message.success(`已进入${acc.name}（资源方后台）`);
-      go('/provider');
+      await enterBackend('资源方运营', '/provider', `已进入${acc.name}（资源方后台）`, acc.providerId);
     } else {
-      localStorage.setItem('cx_uid', 'u-guest');
-      localStorage.removeItem('cx_token');
-      message.success('已进入平台管理后台');
-      go('/admin');
+      await enterBackend('平台管理员', '/admin', '已进入平台管理后台');
     }
   };
 
@@ -130,10 +152,7 @@ export default function Login() {
         <div style={{ width: '100%', maxWidth: 420 }}>
           {/* 移动端入口 */}
           <div style={{ position: 'absolute', top: 20, right: 24, zIndex: 1 }}>
-            <Button size="small" type="text" icon={<MobileOutlined />} onClick={() => {
-              localStorage.setItem('cx_uid', 'u-guest'); localStorage.setItem('cx_guest', '1'); localStorage.removeItem('cx_token');
-              go('/app');
-            }}>移动端 App</Button>
+            <Button size="small" type="text" icon={<MobileOutlined />} onClick={enterApp}>移动端 App</Button>
           </div>
 
           <div style={{ fontSize: 26, fontWeight: 800, color: '#1f2d3d' }}>欢迎回来 👋</div>
