@@ -29,6 +29,9 @@ app.use((req, _res, next) => {
   next();
 });
 
+// 全局会话校验：健康检查、登录、游客、后台入口在 authenticateApi 内放行，其余接口需要 Bearer 令牌
+app.use('/api', authenticateApi);
+
 app.use('/api/auth', auth);
 app.use('/api/market', market);
 app.use('/api/orders', orders);
@@ -39,9 +42,9 @@ app.use('/api/notify', notifications);
 app.use('/api/provider', provider);
 app.use('/api/admin', admin);
 app.use('/api/dashboard', dashboard);
-app.use('/api/advisor', authenticateApi, advisor);
-app.use('/api/approvals-v3', authenticateApi, approvalsV3);
-app.use('/api/finops', authenticateApi, finops);
+app.use('/api/advisor', advisor);
+app.use('/api/approvals-v3', approvalsV3);
+app.use('/api/finops', finops);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'ComputeX API', time: new Date().toISOString() }));
 

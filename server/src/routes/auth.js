@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import db from '../db.js';
 import { now, genId } from '../utils.js';
-import { createGuestSession, createSession, revokeSession, safeMember } from '../security.js';
+import { createGuestSession, createRateLimiter, createSession, ensureBackendMember, revokeSession, safeMember } from '../security.js';
+
+// 游客入口限流：提示词 §3.6 要求 10 分钟 20 次（可用 GUEST_RATE_LIMIT_MAX 覆盖）
+const guestRateLimit = createRateLimiter({ windowMs: 10 * 60 * 1000, max: Number(process.env.GUEST_RATE_LIMIT_MAX || 20), keyPrefix: 'guest' });
 
 const r = Router();
 
@@ -26,7 +29,7 @@ r.post('/login', (req, res) => {
 });
 
 // 游客模式：无需账号密码，一键进入（只读成员身份 + 游客标记）
-r.post('/guest', (_req, res) => {
+r.post('/guest', guestRateLimit, (_req, res) => {
   let guest = db.prepare("SELECT * FROM members WHERE id = 'u-guest'").get();
   if (!guest) {
     db.prepare(`INSERT INTO members (id,enterprise_id,name,phone,email,password,role,status,is_demo,created_at) VALUES ('u-guest','ent-demo','游客体验账号','18800000000','guest@computex.demo','guest123','只读成员','正常',1,?)`)
@@ -36,6 +39,15 @@ r.post('/guest', (_req, res) => {
   const ent = db.prepare('SELECT * FROM enterprises WHERE id = ?').get(guest.enterprise_id);
   const session = createGuestSession();
   res.json({ ok: true, token: session.token, expiresAt: session.expiresAt, member: { ...safeMember(guest), is_guest: 1 }, enterprise: ent, isGuest: 1 });
+});
+
+// 后台一键进入：平台管理员 / 资源方运营的演示会话（路由公开，与前端后台入口配套）
+r.post('/backend', (req, res) => {
+  const role = req.body?.role;
+  if (!['平台管理员', '资源方运营'].includes(role)) return res.status(400).json({ ok: false, msg: '后台角色只能是平台管理员或资源方运营' });
+  const member = ensureBackendMember(role);
+  const session = createSession(member.id);
+  res.json({ ok: true, token: session.token, expiresAt: session.expiresAt, member: safeMember(member) });
 });
 
 // 登出：撤销当前 Bearer 会话（游客令牌为无状态签名令牌，无服务端记录）
@@ -64,11 +76,16 @@ r.get('/demo-accounts', (req, res) => {
 });
 
 // 企业列表（切换器）
+// 企业切换器：只列出会话所属企业（平台管理员可见全部）
 r.get('/enterprises', (req, res) => {
   const uid = req.headers['x-user-id'];
   if (!uid) return res.status(401).json({ ok: false, msg: '未登录' });
   const m = db.prepare('SELECT * FROM members WHERE id = ?').get(uid);
-  const ents = db.prepare('SELECT * FROM enterprises').all();
+  if (!m) return res.status(401).json({ ok: false, msg: '登录已过期' });
+  const isPlatform = req.auth?.role === '平台管理员';
+  const ents = isPlatform
+    ? db.prepare('SELECT * FROM enterprises').all()
+    : db.prepare('SELECT * FROM enterprises WHERE id = ?').all(m.enterprise_id);
   res.json({ ok: true, enterprises: ents, current: m.enterprise_id });
 });
 
