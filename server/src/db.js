@@ -256,6 +256,98 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   expires_at TEXT NOT NULL,
   created_at TEXT DEFAULT (datetime('now','localtime'))
 );
+CREATE TABLE IF NOT EXISTS workload_intents (
+  id TEXT PRIMARY KEY,
+  enterprise_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  workload_type TEXT NOT NULL,
+  model_name TEXT,
+  model_size_b REAL NOT NULL,
+  data_size_gb REAL NOT NULL DEFAULT 0,
+  deadline_hours REAL NOT NULL,
+  budget REAL NOT NULL,
+  region TEXT,
+  compliance_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS recommendations (
+  id TEXT PRIMARY KEY,
+  intent_id TEXT NOT NULL,
+  enterprise_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  engine TEXT NOT NULL,
+  model_id TEXT,
+  status TEXT NOT NULL DEFAULT '已生成',
+  plans_json TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS order_drafts (
+  id TEXT PRIMARY KEY,
+  recommendation_id TEXT NOT NULL,
+  plan_id TEXT NOT NULL,
+  enterprise_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  duration_hours REAL NOT NULL,
+  amount REAL NOT NULL,
+  quote_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT '草稿',
+  order_id TEXT,
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS approval_policies (
+  id TEXT PRIMARY KEY,
+  enterprise_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  min_amount REAL NOT NULL DEFAULT 0,
+  steps_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT '启用',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_at TEXT DEFAULT (datetime('now','localtime')),
+  UNIQUE(project_id, version)
+);
+CREATE TABLE IF NOT EXISTS approval_requests_v3 (
+  id TEXT PRIMARY KEY,
+  enterprise_id TEXT NOT NULL,
+  draft_id TEXT NOT NULL,
+  policy_id TEXT,
+  applicant_id TEXT NOT NULL,
+  amount REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT '待审批',
+  current_step INTEGER NOT NULL DEFAULT 1,
+  submitted_at TEXT NOT NULL,
+  decided_at TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS approval_request_steps (
+  id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL,
+  step_no INTEGER NOT NULL,
+  approver_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT '等待中',
+  comment TEXT,
+  decided_at TEXT,
+  UNIQUE(request_id, step_no)
+);
+CREATE TABLE IF NOT EXISTS usage_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  enterprise_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  instance_id TEXT NOT NULL,
+  usage_date TEXT NOT NULL,
+  gpu_hours REAL NOT NULL DEFAULT 0,
+  gpu_utilization REAL NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,
+  carbon_kg REAL NOT NULL DEFAULT 0,
+  source TEXT NOT NULL,
+  ingested_at TEXT NOT NULL,
+  UNIQUE(instance_id, usage_date)
+);
 CREATE TABLE IF NOT EXISTS subscriptions (
   id TEXT PRIMARY KEY,
   enterprise_id TEXT,
@@ -270,6 +362,7 @@ const count = (t) => db.prepare(`SELECT COUNT(*) c FROM ${t}`).get().c;
 
 // ============ 种子数据 ============
 if (count('enterprises') === 0) seed();
+seedV3Tables();
 
 function seed() {
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
@@ -419,6 +512,43 @@ function seed() {
 
   // API 密钥
   db.prepare(`INSERT INTO api_keys VALUES (?,?,?,?,?,?)`).run('key-01', 'ent-demo', '生产环境密钥', 'ck_live_9f8e7d6c5b4a3f2e1d0c', 'https://hooks.example.com/computex', now);
+}
+
+// V3 种子：审批策略由项目审批规则派生；用量事实只在对应表为空时写入，已有数据库也能补齐
+function seedV3Tables() {
+  if (count('approval_policies') === 0) {
+    const stamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const insert = db.prepare(`INSERT INTO approval_policies (id,enterprise_id,project_id,name,min_amount,steps_json,status,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+    for (const project of db.prepare('SELECT * FROM projects').all()) {
+      const rule = JSON.parse(project.approval_rule || '{}');
+      const approvers = Array.isArray(rule.approvers) ? rule.approvers : [];
+      if (!(Number(rule.threshold) > 0) || approvers.length === 0) continue;
+      insert.run(`apol-${project.id}-1`, project.enterprise_id, project.id, `${project.name}采购审批`, Number(rule.threshold),
+        JSON.stringify(approvers.map(approverId => ({ approverId }))), '启用', 1, stamp, stamp);
+    }
+  }
+  if (count('usage_records') === 0) seedUsageRecords();
+}
+
+// 用量事实（演示数据）：运行中、待续费、异常实例按自然日生成最近 30 天记录；利用率由实例编号确定性生成
+function seedUsageRecords() {
+  const baseUtilization = { 'ins-001': 95, 'ins-002': 90, 'ins-003': 70, 'ins-005': 15, 'ins-006': 45, 'ins-007': 8 };
+  const rows = db.prepare(`SELECT i.id, i.enterprise_id, i.project_id, r.price_hour
+    FROM instances i JOIN resources r ON r.id = i.resource_id
+    WHERE i.status IN ('运行中', '待续费', '异常') ORDER BY i.id`).all();
+  const insert = db.prepare(`INSERT INTO usage_records (enterprise_id,project_id,instance_id,usage_date,gpu_hours,gpu_utilization,cost,carbon_kg,source,ingested_at) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  const endDay = Date.UTC(2026, 9, 26); // 最新用量日期：2026-10-26
+  rows.forEach((row, instanceIndex) => {
+    const base = baseUtilization[row.id] ?? 60;
+    for (let offset = 29; offset >= 0; offset--) {
+      const date = new Date(endDay - offset * 86400000).toISOString().slice(0, 10);
+      const wave = ((instanceIndex * 7919 + offset * 104729) % 1000) / 1000 - 0.5; // 确定性波动，范围约 ±6
+      const utilization = Math.min(100, Math.max(0, Number((base + wave * 12).toFixed(1))));
+      const gpuHours = 8 * 24;
+      const cost = Number((row.price_hour * 24).toFixed(2));
+      insert.run(row.enterprise_id, row.project_id, row.id, date, gpuHours, utilization, cost, Number((gpuHours * 0.3).toFixed(2)), 'provider-metering', `${date} 23:55:00`);
+    }
+  });
 }
 
 export default db;
