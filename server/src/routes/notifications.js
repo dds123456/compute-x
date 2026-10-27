@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../db.js';
 import { now, genId } from '../utils.js';
+import { requireRoles } from '../security.js';
 
 const r = Router();
 
@@ -27,16 +28,17 @@ r.post('/notifications/read', (req, res) => {
 });
 
 // API 密钥
+// 企业身份以会话为准：忽略请求中的 enterpriseId，防止跨租户读取或写入密钥
 r.get('/api-keys', (req, res) => {
-  const rows = db.prepare('SELECT * FROM api_keys WHERE enterprise_id = ?').all(req.query.enterpriseId);
-  res.json({ ok: true, keys: rows });
+  const rows = db.prepare('SELECT id, enterprise_id, name, webhook, created_at FROM api_keys WHERE enterprise_id = ?').all(req.auth.enterpriseId);
+  res.json({ ok: true, keys: rows.map(row => ({ ...row, key_preview: `ck_live_••••${row.id.slice(-4)}` })) });
 });
 
-r.post('/api-keys', (req, res) => {
-  const { enterpriseId, name, webhook } = req.body || {};
+r.post('/api-keys', requireRoles('企业管理员', '平台管理员'), (req, res) => {
+  const { name, webhook } = req.body || {};
   const id = genId('key');
   const key = `ck_live_${Math.random().toString(36).slice(2, 14)}${Math.random().toString(36).slice(2, 8)}`;
-  db.prepare('INSERT INTO api_keys VALUES (?,?,?,?,?,?)').run(id, enterpriseId, name, key, webhook || '', now());
+  db.prepare('INSERT INTO api_keys VALUES (?,?,?,?,?,?)').run(id, req.auth.enterpriseId, name, key, webhook || '', now());
   res.json({ ok: true, key });
 });
 

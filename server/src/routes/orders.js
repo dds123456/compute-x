@@ -121,8 +121,9 @@ r.get('/instances', (req, res) => {
   res.json({ ok: true, instances: rows });
 });
 
+// 实例归属以会话为准：跨企业的实例与不存在的实例返回相同的 404，不暴露对象是否存在
 r.get('/instances/:id', (req, res) => {
-  const inst = db.prepare('SELECT * FROM instances WHERE id = ?').get(req.params.id);
+  const inst = db.prepare('SELECT * FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
   if (!inst) return res.status(404).json({ ok: false, msg: '实例不存在' });
   const resource = db.prepare('SELECT * FROM resources WHERE id = ?').get(inst.resource_id);
   const alerts = db.prepare('SELECT * FROM alerts WHERE instance_id = ? ORDER BY triggered_at DESC').all(inst.id);
@@ -144,16 +145,19 @@ r.get('/instances/:id', (req, res) => {
 
 r.post('/instances/:id/action', (req, res) => {
   const { action } = req.body || {};
-  const result = transitionInstance(req.params.id, action);
+  // 先做归属校验，再进入状态机：状态机本身只按 ID 工作，不得直接接收未经校验的请求
+  const owned = db.prepare('SELECT id FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!owned) return res.status(404).json({ ok: false, msg: '实例不存在' });
+  const result = transitionInstance(owned.id, action);
   if (!result.ok) return res.json({ ok: false, msg: result.msg });
-  const inst = db.prepare('SELECT * FROM instances WHERE id = ?').get(req.params.id);
+  const inst = db.prepare('SELECT * FROM instances WHERE id = ?').get(owned.id);
   auditLog(inst.enterprise_id, req.headers['x-user-id'] || 'system', '成员', `${action}实例`, inst.name);
   res.json({ ok: true, msg: `操作成功：${action}`, instance: { ...inst, current_cost: calcInstanceCost(inst) } });
 });
 
 // 创建快照
 r.post('/instances/:id/snapshot', (req, res) => {
-  const inst = db.prepare('SELECT * FROM instances WHERE id = ?').get(req.params.id);
+  const inst = db.prepare('SELECT * FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
   if (!inst) return res.status(404).json({ ok: false, msg: '实例不存在' });
   const name = req.body.name || `snapshot-${Date.now().toString().slice(-6)}`;
   db.prepare('INSERT INTO snapshots VALUES (?,?,?,?,?)').run(genId('snap'), inst.id, name, '120GB', now());
@@ -162,7 +166,7 @@ r.post('/instances/:id/snapshot', (req, res) => {
 
 // 日志（模拟）
 r.get('/instances/:id/logs', (req, res) => {
-  const inst = db.prepare('SELECT * FROM instances WHERE id = ?').get(req.params.id);
+  const inst = db.prepare('SELECT * FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
   const lines = [];
   if (!inst) return res.json({ ok: true, lines });
   const isTrain = inst.image.includes('训练') || inst.image.includes('PyTorch');
