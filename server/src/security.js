@@ -76,15 +76,23 @@ export function verifyGuestSession(token) {
 }
 
 // 后台演示账号（平台管理员 / 资源方运营），供后台一键进入使用
+// 资源方运营演示账号绑定到华东智算中心（prv-cloud）；平台管理员不绑定资源方
+export const DEMO_PROVIDER_ID = 'prv-cloud';
+
 export function ensureBackendMember(role) {
   const id = role === '平台管理员' ? 'u-admin-platform' : 'u-provider-operator';
+  const providerId = role === '资源方运营' ? DEMO_PROVIDER_ID : null;
   let member = db.prepare('SELECT * FROM members WHERE id = ?').get(id);
   if (!member) {
-    db.prepare(`INSERT INTO members (id,enterprise_id,name,phone,email,password,role,status,is_demo,created_at)
-      VALUES (?,?,?,?,?,?,?,?,1,?)`).run(
+    db.prepare(`INSERT INTO members (id,enterprise_id,name,phone,email,password,role,status,is_demo,created_at,provider_id)
+      VALUES (?,?,?,?,?,?,?,?,1,?,?)`).run(
       id, '', role === '平台管理员' ? '平台运营中心' : '华东智算中心运营', '', '',
-      hashPassword(crypto.randomBytes(16).toString('base64url')), role, '正常', new Date().toISOString(),
+      hashPassword(crypto.randomBytes(16).toString('base64url')), role, '正常', new Date().toISOString(), providerId,
     );
+    member = db.prepare('SELECT * FROM members WHERE id = ?').get(id);
+  } else if (providerId && member.provider_id !== providerId) {
+    // 已存在的记录（如早期数据库）补绑定，保证资源方账号总能看到自己的供给
+    db.prepare('UPDATE members SET provider_id = ? WHERE id = ?').run(providerId, id);
     member = db.prepare('SELECT * FROM members WHERE id = ?').get(id);
   }
   return member;
@@ -214,7 +222,8 @@ export function authenticateApi(req, res, next) {
   }
 
   const isGuest = member.id === GUEST_USER_ID;
-  req.auth = { userId: member.id, enterpriseId: member.enterprise_id, role: member.role, isGuest };
+  // providerId 仅资源方运营账号有值；资源方路由必须以它为准，不得信任请求参数
+  req.auth = { userId: member.id, enterpriseId: member.enterprise_id, role: member.role, providerId: member.provider_id || null, isGuest };
   req.headers['x-user-id'] = member.id;
   if (member.enterprise_id) {
     if (req.query?.enterpriseId) req.query.enterpriseId = member.enterprise_id;

@@ -1,24 +1,48 @@
 import { Router } from 'express';
 import db from '../db.js';
-import { now, genId, genNo, notify } from '../utils.js';
+import { now, genId, genNo, notify, auditLog } from '../utils.js';
 
 const r = Router();
 
-// 工单列表
+// 工单列表（企业以会话为准）
 r.get('/tickets', (req, res) => {
-  const { enterpriseId, status } = req.query;
+  const { status } = req.query;
   let sql = `SELECT t.*, m.name user_name FROM tickets t LEFT JOIN members m ON t.user_id = m.id WHERE t.enterprise_id = ?`;
-  const params = [enterpriseId];
+  const params = [req.auth.enterpriseId];
   if (status && status !== '全部') { sql += ` AND t.status = ?`; params.push(status); }
   sql += ` ORDER BY datetime(t.created_at) DESC`;
   res.json({ ok: true, tickets: db.prepare(sql).all(...params) });
 });
 
-// 工单详情
+// SLA 统计：首次响应达标率（已回复的工单中，首次回复在 SLA 时限内的比例）
+r.get('/tickets/sla-stats', (req, res) => {
+  const rows = db.prepare('SELECT * FROM tickets WHERE enterprise_id = ?').all(req.auth.enterpriseId);
+  const answered = rows.filter(t => JSON.parse(t.replies || '[]').length > 0);
+  const onTime = answered.filter(t => {
+    const first = JSON.parse(t.replies)[0];
+    return first && t.sla_at && first.at <= t.sla_at;
+  });
+  const rate = answered.length ? Math.round(onTime.length / answered.length * 1000) / 10 : 0;
+  res.json({ ok: true, stats: { total: rows.length, answered: answered.length, firstResponseRate: rate, overdue: rows.filter(t => ['待处理', '处理中'].includes(t.status) && t.sla_at && t.sla_at < now()).length } });
+});
+
+// 工单详情：跨企业与不存在统一 404（注意：固定路径 sla-stats 须先于 :id 注册）
 r.get('/tickets/:id', (req, res) => {
-  const t = db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
+  const t = db.prepare('SELECT * FROM tickets WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
   if (!t) return res.status(404).json({ ok: false, msg: '工单不存在' });
   res.json({ ok: true, ticket: { ...t, replies: JSON.parse(t.replies || '[]') } });
+});
+
+// 升级：优先级提升为紧急，并写入系统回复、审计与通知（提示词 §3.3-H）
+r.post('/tickets/:id/escalate', (req, res) => {
+  const t = db.prepare('SELECT * FROM tickets WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!t) return res.status(404).json({ ok: false, msg: '工单不存在' });
+  const replies = JSON.parse(t.replies || '[]');
+  replies.push({ who: '系统', at: now(), msg: '工单已升级为紧急，已通知值班人员' });
+  db.prepare(`UPDATE tickets SET priority='紧急', replies=? WHERE id=?`).run(JSON.stringify(replies), t.id);
+  auditLog(t.enterprise_id, req.auth.userId, '成员', '升级工单', t.ticket_no);
+  notify(t.enterprise_id, t.user_id, '工单', '工单已升级', `工单 ${t.ticket_no} 已升级为紧急`, `/tickets/${t.id}`);
+  res.json({ ok: true });
 });
 
 // 创建工单

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import db from '../db.js';
-import { now, genId, genNo, notify, auditLog, calcInstanceCost, transitionInstance, STATUS_ACTIONS } from '../utils.js';
+import { now, genId, genNo, notify, auditLog, calcInstanceCost, transitionInstance, STATUS_ACTIONS, RENEW_HOURS } from '../utils.js';
 
 const r = Router();
 
@@ -162,6 +162,50 @@ r.post('/instances/:id/snapshot', (req, res) => {
   const name = req.body.name || `snapshot-${Date.now().toString().slice(-6)}`;
   db.prepare('INSERT INTO snapshots VALUES (?,?,?,?,?)').run(genId('snap'), inst.id, name, '120GB', now());
   res.json({ ok: true, msg: '快照创建成功' });
+});
+
+// 变更配置：按新旧单价差价补扣费（口径与续费一致：差价 × 168 小时），并切换到目标资源；余额不足拒绝
+r.post('/instances/:id/change-spec', (req, res) => {
+  const inst = db.prepare('SELECT * FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!inst) return res.status(404).json({ ok: false, msg: '实例不存在' });
+  if (!['运行中', '已停止'].includes(inst.status)) return res.status(409).json({ ok: false, msg: `当前状态「${inst.status}」不可变更配置` });
+  const target = db.prepare('SELECT * FROM resources WHERE id = ?').get(req.body?.resourceId);
+  if (!target || target.status !== '可售') return res.status(400).json({ ok: false, msg: '目标规格不可售' });
+  if (target.stock < 1) return res.status(409).json({ ok: false, msg: '目标规格库存不足' });
+  const diff = Math.max(0, Math.round(((target.price_hour || 0) - (inst.price_hour || 0)) * RENEW_HOURS * 100) / 100);
+  const ent = db.prepare('SELECT balance FROM enterprises WHERE id = ?').get(inst.enterprise_id);
+  if (diff > 0 && ent.balance < diff) return res.status(402).json({ ok: false, msg: `余额不足（需补差价 ${diff} 元）` });
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (diff > 0) db.prepare('UPDATE enterprises SET balance = balance - ? WHERE id = ?').run(diff, inst.enterprise_id);
+    db.prepare('UPDATE instances SET resource_id=?, spec=?, gpu_model=?, region=?, price_hour=? WHERE id=?')
+      .run(target.id, target.spec, target.gpu_model, target.region, target.price_hour, inst.id);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  auditLog(inst.enterprise_id, req.auth.userId, '成员', '变更配置', `${inst.name} → ${target.spec}，补差 ${diff} 元`);
+  res.json({ ok: true, fee: diff, resourceId: target.id });
+});
+
+// 快照恢复：进入“恢复中”状态（提示词 §3.3-A：快照创建/恢复）；恢复完成由后台流程推进，这里只做状态流转
+r.post('/instances/:id/restore', (req, res) => {
+  const inst = db.prepare('SELECT * FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!inst) return res.status(404).json({ ok: false, msg: '实例不存在' });
+  if (!['运行中', '已停止', '异常'].includes(inst.status)) return res.status(409).json({ ok: false, msg: `当前状态「${inst.status}」不可恢复快照` });
+  db.prepare(`UPDATE instances SET status='恢复中' WHERE id=?`).run(inst.id);
+  auditLog(inst.enterprise_id, req.auth.userId, '成员', '恢复快照', inst.name);
+  res.json({ ok: true, status: '恢复中' });
+});
+
+// 实例计费明细：读取 usage_records 的日用量事实（最近 7 天，按日期升序）
+r.get('/instances/:id/usage', (req, res) => {
+  const inst = db.prepare('SELECT id FROM instances WHERE id = ? AND enterprise_id = ?').get(req.params.id, req.auth.enterpriseId);
+  if (!inst) return res.status(404).json({ ok: false, msg: '实例不存在' });
+  const usage = db.prepare(`SELECT usage_date, gpu_hours, gpu_utilization, cost, carbon_kg FROM usage_records
+    WHERE instance_id = ? ORDER BY usage_date DESC LIMIT 7`).all(inst.id).reverse();
+  res.json({ ok: true, usage });
 });
 
 // 日志（模拟）

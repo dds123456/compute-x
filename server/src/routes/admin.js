@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import db from '../db.js';
-import { now, genId, genNo } from '../utils.js';
+import { now, genId, genNo, auditLog } from '../utils.js';
 
 const r = Router();
 
@@ -73,6 +73,37 @@ r.get('/tickets', (req, res) => {
 r.get('/settlements', (req, res) => {
   const rows = db.prepare(`SELECT s.*, p.name provider_name FROM settlements s LEFT JOIN providers p ON s.provider_id = p.id ORDER BY datetime(s.created_at) DESC`).all();
   res.json({ ok: true, settlements: rows });
+});
+
+// 月度结算引擎：按资源方汇总账期 GMV，扣除平台佣金（7%，资源方可自定义费率），幂等写入结算单
+r.post('/settlements/run', (req, res) => {
+  const period = String(req.body?.period || '');
+  if (!/^\d{4}-\d{2}$/.test(period)) return res.status(400).json({ ok: false, msg: '账期格式应为 YYYY-MM' });
+  const providers = db.prepare('SELECT * FROM providers WHERE cert_status = ?').all('已通过');
+  let created = 0;
+  let updated = 0;
+  for (const provider of providers) {
+    const gmv = db.prepare(`SELECT COALESCE(SUM(o.amount), 0) AS gmv FROM orders o
+      JOIN resources r ON r.id = o.resource_id
+      WHERE r.provider_id = ? AND o.status IN ('已支付','已完成') AND substr(o.created_at, 1, 7) = ?`).get(provider.id, period).gmv;
+    const commission = Math.round(gmv * Number(provider.fee_rate || 0.07) * 100) / 100;
+    const amount = Math.round((gmv - commission) * 100) / 100;
+    const existing = db.prepare('SELECT id, status FROM settlements WHERE provider_id = ? AND period = ?').get(provider.id, period);
+    if (existing) {
+      // 已提现或已结算的单据不得被重算覆盖，保证幂等与资金安全
+      if (existing.status === '待结算') {
+        db.prepare('UPDATE settlements SET gmv=?, commission=?, amount=? WHERE id=?').run(gmv, commission, amount, existing.id);
+        updated += 1;
+      }
+      continue;
+    }
+    const seq = String(db.prepare('SELECT COUNT(*) c FROM settlements').get().c + 1).padStart(3, '0');
+    db.prepare(`INSERT INTO settlements (id,settle_no,provider_id,period,gmv,commission,amount,status,cycle,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(genId('st'), `STL${period.replace('-', '')}${seq}`, provider.id, period, gmv, commission, amount, '待结算', provider.settlement_cycle || 'T+7', now());
+    created += 1;
+  }
+  auditLog('ent-demo', req.auth.userId, '平台管理员', '月度结算', period);
+  res.json({ ok: true, period, created, updated });
 });
 
 // 公告

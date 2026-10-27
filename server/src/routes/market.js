@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import db from '../db.js';
-import { genId, genNo, notify } from '../utils.js';
+import { now, genId, genNo, notify } from '../utils.js';
 
 const r = Router();
 
@@ -37,7 +37,24 @@ r.get('/resources/:id', (req, res) => {
     { user: '王项目', time: '2026-07-28', content: '交付快，网络稳定，售后响应及时。', stars: 4 },
     { user: '匿名用户', time: '2026-07-15', content: '高峰期偶有排队，整体可用。', stars: 4 },
   ];
-  res.json({ ok: true, resource: { ...row, benches, reviews } });
+  const reviewRows = db.prepare(`SELECT user_name AS user, created_at AS time, content, stars FROM resource_reviews
+    WHERE resource_id = ? ORDER BY created_at DESC LIMIT 20`).all(row.id);
+  res.json({ ok: true, resource: { ...row, benches, reviews: reviewRows } });
+});
+
+// 提交资源评价：企业与成员以会话为准；星级 1–5
+r.post('/resources/:id/review', (req, res) => {
+  const { content, stars } = req.body || {};
+  const resource = db.prepare('SELECT id FROM resources WHERE id = ?').get(req.params.id);
+  if (!resource) return res.status(404).json({ ok: false, msg: '资源不存在' });
+  const starCount = Number(stars);
+  if (!content || !Number.isInteger(starCount) || starCount < 1 || starCount > 5) {
+    return res.status(400).json({ ok: false, msg: '请填写评价内容并选择 1–5 星' });
+  }
+  const member = db.prepare('SELECT name FROM members WHERE id = ?').get(req.auth.userId);
+  db.prepare(`INSERT INTO resource_reviews (id,resource_id,enterprise_id,member_id,user_name,content,stars) VALUES (?,?,?,?,?,?,?)`)
+    .run(genId('rv'), resource.id, req.auth.enterpriseId, req.auth.userId, member?.name || '成员', String(content).slice(0, 500), starCount);
+  res.json({ ok: true, msg: '评价已提交' });
 });
 
 // 资源对比
@@ -84,11 +101,13 @@ r.post('/estimate', (req, res) => {
   res.json({ ok: true, range: [low, high], recommendations: list, taskType, hours, cards });
 });
 
-// 订阅降价提醒
+// 订阅降价提醒：企业与成员以会话为准（不再硬编码 ent-demo，也不信任请求体中的 memberId）
 r.post('/subscribe', (req, res) => {
-  const { resourceId, memberId, type = '降价提醒' } = req.body || {};
+  const { resourceId, type = '降价提醒' } = req.body || {};
+  const resource = db.prepare('SELECT id FROM resources WHERE id = ?').get(resourceId);
+  if (!resource) return res.status(404).json({ ok: false, msg: '资源不存在' });
   db.prepare(`INSERT OR REPLACE INTO subscriptions (id,enterprise_id,member_id,resource_id,type,created_at) VALUES (?,?,?,?,?,datetime('now','localtime'))`)
-    .run(genId('sub'), 'ent-demo', memberId, resourceId, type);
+    .run(genId('sub'), req.auth.enterpriseId, req.auth.userId, resourceId, type);
   res.json({ ok: true });
 });
 

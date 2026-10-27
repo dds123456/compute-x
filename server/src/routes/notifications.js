@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import db from '../db.js';
-import { now, genId } from '../utils.js';
+import { now, genId, auditLog } from '../utils.js';
 import { requireRoles } from '../security.js';
 
 const r = Router();
@@ -42,9 +42,30 @@ r.post('/api-keys', requireRoles('企业管理员', '平台管理员'), (req, re
   res.json({ ok: true, key });
 });
 
-// 通知偏好
-r.post('/preferences', (req, res) => {
+// 告警列表：来自真实告警表，只返回本企业实例的告警（经 instances 关联归属），附实例名称
+r.get('/alerts', (req, res) => {
+  const rows = db.prepare(`SELECT a.id, a.instance_id, i.name AS instance_name, a.type, a.level, a.metric, a.message, a.status, a.triggered_at, a.recovered_at
+    FROM alerts a JOIN instances i ON i.id = a.instance_id
+    WHERE i.enterprise_id = ? ORDER BY datetime(a.triggered_at) DESC LIMIT 50`).all(req.auth.enterpriseId);
+  res.json({ ok: true, alerts: rows });
+});
+
+// 撤销密钥：只能撤销本企业的密钥，他企业或不存在的密钥统一返回 404
+r.delete('/api-keys/:id', requireRoles('企业管理员', '平台管理员'), (req, res) => {
+  const result = db.prepare('DELETE FROM api_keys WHERE id = ? AND enterprise_id = ?').run(req.params.id, req.auth.enterpriseId);
+  if (result.changes === 0) return res.status(404).json({ ok: false, msg: '密钥不存在' });
+  auditLog(req.auth.enterpriseId, req.auth.userId, '成员', '撤销 API 密钥', req.params.id);
   res.json({ ok: true });
+});
+
+// 通知偏好：按用户保存；关键告警不可退订，因此 critical_alerts 始终为 true
+r.post('/preferences', (req, res) => {
+  const { email = true, app_push = true, billing = true, approval = true, marketing = false } = req.body || {};
+  const flags = { email, app_push, billing, approval, marketing };
+  db.prepare(`INSERT INTO notification_preferences (user_id,enterprise_id,preferences_json,updated_at) VALUES (?,?,?,?)
+    ON CONFLICT(user_id) DO UPDATE SET preferences_json=excluded.preferences_json, updated_at=excluded.updated_at`)
+    .run(req.auth.userId, req.auth.enterpriseId, JSON.stringify(flags), now());
+  res.json({ ok: true, preferences: { ...flags, critical_alerts: true } });
 });
 
 export default r;

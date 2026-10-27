@@ -42,12 +42,27 @@ r.post('/members/:id/transfer', (req, res) => {
 });
 
 // ============ 项目 ============
+// 创建项目：企业以会话为准；多级审批人同时写入项目审批规则与审批策略（版本 1），两者保持同步
 r.post('/projects', (req, res) => {
-  const { enterpriseId, name, ownerId, budget, threshold } = req.body || {};
+  const { name, ownerId, budget, threshold, levels = 1, approvers } = req.body || {};
+  const enterpriseId = req.auth.enterpriseId;
   const id = genId('p');
-  db.prepare(`INSERT INTO projects (id,enterprise_id,name,owner_id,budget,used,approval_rule,status,created_at) VALUES (?,?,?,?,?,0,?,?,?)`)
-    .run(id, enterpriseId, name, ownerId, Number(budget), JSON.stringify({ threshold: Number(threshold || 0), approvers: [ownerId], levels: 1 }), '正常', now());
-  auditLog(enterpriseId, req.headers['x-user-id'], '成员', '创建项目', `${name}（预算 ${budget} 元）`);
+  const approverList = Array.isArray(approvers) && approvers.length ? approvers : [ownerId];
+  const levelCount = Math.max(1, Math.min(Number(levels) || 1, approverList.length));
+  const steps = Array.from({ length: levelCount }, (_, index) => ({ step: index + 1, approverId: approverList[index] || approverList[0] }));
+  const stamp = now();
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`INSERT INTO projects (id,enterprise_id,name,owner_id,budget,used,approval_rule,status,created_at) VALUES (?,?,?,?,?,0,?,?,?)`)
+      .run(id, enterpriseId, name, ownerId, Number(budget), JSON.stringify({ threshold: Number(threshold || 0), approvers: approverList, levels: levelCount }), '正常', stamp);
+    db.prepare(`INSERT INTO approval_policies (id,enterprise_id,project_id,name,min_amount,steps_json,status,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(`apol-${id}-1`, enterpriseId, id, `${name}采购审批`, Number(threshold || 0), JSON.stringify(steps), '启用', 1, stamp, stamp);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  auditLog(enterpriseId, req.auth.userId, '成员', '创建项目', `${name}（预算 ${budget} 元，${levelCount} 级审批）`);
   res.json({ ok: true, msg: '项目创建成功', id });
 });
 

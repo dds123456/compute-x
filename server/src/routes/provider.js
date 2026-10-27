@@ -4,9 +4,25 @@ import { now, genId, genNo, calcInstanceCost } from '../utils.js';
 
 const r = Router();
 
+// 资源方身份以会话为准：只有绑定了资源方的运营账号（或平台管理员，用于运营查看）才能进入资源方路由
+// 请求参数中的 providerId 一律忽略，防止资源方之间互相读取收益、库存与订单
+function providerScope(req, res, next) {
+  const role = req.auth?.role;
+  if (role === '平台管理员' && req.providerId) {
+    req.providerId = String(req.providerId);
+    return next();
+  }
+  if (role === '资源方运营' && req.auth.providerId) {
+    req.providerId = req.auth.providerId;
+    return next();
+  }
+  return res.status(403).json({ ok: false, msg: '当前账号未绑定资源方，无权访问资源方数据' });
+}
+r.use(providerScope);
+
 // 资源方概览：收益/库存/故障
 r.get('/overview', (req, res) => {
-  const providerId = req.query.providerId;
+  const providerId = req.providerId;
   const insts = db.prepare('SELECT * FROM instances WHERE provider_id = ?').all(providerId);
   const resources = db.prepare('SELECT * FROM resources WHERE provider_id = ?').all(providerId);
   const settlements = db.prepare('SELECT * FROM settlements WHERE provider_id = ?').all(providerId);
@@ -30,7 +46,7 @@ r.get('/overview', (req, res) => {
 
 // 资源方资源列表（含运行实例数）
 r.get('/resources', (req, res) => {
-  const rows = db.prepare('SELECT * FROM resources WHERE provider_id = ?').all(req.query.providerId).map(res => {
+  const rows = db.prepare('SELECT * FROM resources WHERE provider_id = ?').all(req.providerId).map(res => {
     const running = db.prepare(`SELECT COUNT(*) c FROM instances WHERE resource_id = ? AND status IN ('运行中','创建中')`).get(res.id).c;
     return { ...res, running };
   });
@@ -53,7 +69,7 @@ r.post('/resources/:id/price', (req, res) => {
 
 // 收益预估（模拟）
 r.get('/revenue-estimate', (req, res) => {
-  const providerId = req.query.providerId;
+  const providerId = req.providerId;
   const resources = db.prepare('SELECT * FROM resources WHERE provider_id = ?').all(providerId);
   const estimate = resources.reduce((s, x) => s + x.stock * x.price_hour * 24 * 0.6, 0); // 假设60%利用率
   res.json({ ok: true, estimate: Math.round(estimate), resources });
@@ -61,13 +77,13 @@ r.get('/revenue-estimate', (req, res) => {
 
 // 结算明细（含佣金）
 r.get('/settlements', (req, res) => {
-  const rows = db.prepare('SELECT * FROM settlements WHERE provider_id = ? ORDER BY created_at DESC').all(req.query.providerId);
+  const rows = db.prepare('SELECT * FROM settlements WHERE provider_id = ? ORDER BY created_at DESC').all(req.providerId);
   res.json({ ok: true, settlements: rows });
 });
 
 // 订单（资源方视角：归属其资源的订单）
 r.get('/orders', (req, res) => {
-  const rows = db.prepare(`SELECT o.*, r.provider_id, p.name project_name FROM orders o LEFT JOIN resources r ON o.resource_id = r.id LEFT JOIN projects p ON o.project_id = p.id WHERE r.provider_id = ? ORDER BY datetime(o.created_at) DESC`).all(req.query.providerId);
+  const rows = db.prepare(`SELECT o.*, r.provider_id, p.name project_name FROM orders o LEFT JOIN resources r ON o.resource_id = r.id LEFT JOIN projects p ON o.project_id = p.id WHERE r.provider_id = ? ORDER BY datetime(o.created_at) DESC`).all(req.providerId);
   res.json({ ok: true, orders: rows });
 });
 

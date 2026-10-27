@@ -348,6 +348,31 @@ CREATE TABLE IF NOT EXISTS usage_records (
   ingested_at TEXT NOT NULL,
   UNIQUE(instance_id, usage_date)
 );
+CREATE TABLE IF NOT EXISTS recharge_records (
+  id TEXT PRIMARY KEY,
+  enterprise_id TEXT NOT NULL,
+  member_id TEXT,
+  amount REAL NOT NULL CHECK (amount > 0),
+  channel TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS resource_reviews (
+  id TEXT PRIMARY KEY,
+  resource_id TEXT NOT NULL,
+  enterprise_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  user_name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  stars INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 5),
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS notification_preferences (
+  user_id TEXT PRIMARY KEY,
+  enterprise_id TEXT NOT NULL,
+  preferences_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS subscriptions (
   id TEXT PRIMARY KEY,
   enterprise_id TEXT,
@@ -514,6 +539,15 @@ function seed() {
   db.prepare(`INSERT INTO api_keys VALUES (?,?,?,?,?,?)`).run('key-01', 'ent-demo', '生产环境密钥', 'ck_live_9f8e7d6c5b4a3f2e1d0c', 'https://hooks.example.com/computex', now);
 }
 
+// 幂等迁移：members.provider_id 用于把资源方运营账号绑定到具体资源方（会话以此确定可见的供给数据）
+// 已有数据库可能早于该列，故用 ALTER TABLE 补齐，而不是只改 CREATE TABLE
+function ensureColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all().map(row => row.name);
+  if (!columns.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+ensureColumn('members', 'provider_id', 'TEXT');
+db.prepare(`UPDATE members SET provider_id = 'prv-cloud' WHERE id = 'u-provider-operator' AND (provider_id IS NULL OR provider_id = '')`).run();
+
 // V3 种子：审批策略由项目审批规则派生；用量事实只在对应表为空时写入，已有数据库也能补齐
 function seedV3Tables() {
   if (count('approval_policies') === 0) {
@@ -528,6 +562,15 @@ function seedV3Tables() {
     }
   }
   if (count('usage_records') === 0) seedUsageRecords();
+  if (count('resource_reviews') === 0) seedResourceReviews();
+}
+
+// 资源评价初始数据（演示）：与资源详情页原先的示例评价一致，改为真实表记录
+function seedResourceReviews() {
+  const insert = db.prepare(`INSERT INTO resource_reviews (id,resource_id,enterprise_id,member_id,user_name,content,stars,created_at) VALUES (?,?,?,?,?,?,?,?)`);
+  insert.run('rv-01', 'r-02', 'ent-demo', 'u-eng', '李算法', '性能符合预期，训练吞吐与基准分一致。', 5, '2026-08-10 10:00:00');
+  insert.run('rv-02', 'r-02', 'ent-demo', 'u-pm', '王项目', '交付快，网络稳定，售后响应及时。', 4, '2026-07-28 10:00:00');
+  insert.run('rv-03', 'r-02', 'ent-lab', 'u-lab', '匿名用户', '高峰期偶有排队，整体可用。', 4, '2026-07-15 10:00:00');
 }
 
 // 用量事实（演示数据）：运行中、待续费、异常实例按自然日生成最近 30 天记录；利用率由实例编号确定性生成
@@ -537,7 +580,8 @@ function seedUsageRecords() {
     FROM instances i JOIN resources r ON r.id = i.resource_id
     WHERE i.status IN ('运行中', '待续费', '异常') ORDER BY i.id`).all();
   const insert = db.prepare(`INSERT INTO usage_records (enterprise_id,project_id,instance_id,usage_date,gpu_hours,gpu_utilization,cost,carbon_kg,source,ingested_at) VALUES (?,?,?,?,?,?,?,?,?,?)`);
-  const endDay = Date.UTC(2026, 9, 26); // 最新用量日期：2026-10-26
+  // 最新用量日期：2026-08-31，与账单、工单、告警所在的 2026-08 对齐，使账单明细能按用量事实汇总
+  const endDay = Date.UTC(2026, 7, 31);
   rows.forEach((row, instanceIndex) => {
     const base = baseUtilization[row.id] ?? 60;
     for (let offset = 29; offset >= 0; offset--) {

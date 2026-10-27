@@ -46,7 +46,8 @@ async function superHeaders() {
 }
 
 async function providerHeaders() {
-  db.prepare(`INSERT OR IGNORE INTO members (id,enterprise_id,name,password,role,status,is_demo) VALUES ('u-prov','','华东运营','123456','资源方运营','正常',1)`).run();
+  // 资源方运营账号必须绑定具体资源方（provider_id），否则资源方路由的守卫会拒绝访问
+  db.prepare(`INSERT OR IGNORE INTO members (id,enterprise_id,name,password,role,status,is_demo,provider_id) VALUES ('u-prov','','华东运营','123456','资源方运营','正常',1,'prv-cloud')`).run();
   const r = await post('/auth/login', { userId: 'u-prov', password: '123456' });
   return { authorization: `Bearer ${(await r.json()).token}` };
 }
@@ -71,7 +72,7 @@ test('F9 续费真实扣减余额并顺延到期', async () => {
   const r = await post('/orders/instances/ins-006/action', { action: '续费' }, admin.body.token);
   assert.equal(r.status, 200);
   const afterBalance = db.prepare("SELECT balance FROM enterprises WHERE id = 'ent-demo'").get().balance;
-  assert.equal(Math.round((beforeBalance - afterBalance) * 100) / 100, 42); // RTX 4090 6元/时 × 7 天
+  assert.equal(Math.round((beforeBalance - afterBalance) * 100) / 100, 1008); // RTX 4090 6元/时 × 168 小时（续费 7 天，按小时计价）
   const inst = db.prepare("SELECT status FROM instances WHERE id = 'ins-006'").get();
   assert.equal(inst.status, '运行中');
 });
@@ -95,9 +96,16 @@ test('F7 月度结算生成与提现状态校验', async () => {
   const runBody = await run.json();
   assert.ok(runBody.created + runBody.updated >= 1);
 
+  // 状态校验需要一条本资源方（prv-cloud）的待结算单；2026-08 已存在的单据按幂等规则不重算，因此显式准备一条
+  db.prepare(`INSERT INTO settlements (id,settle_no,provider_id,period,gmv,commission,amount,status,cycle,created_at) VALUES ('st-own-01','STLOWN001','prv-cloud','2026-09',1000,70,930,'待结算','T+7',datetime('now','localtime'))`).run();
+
   const ph = await providerHeaders();
-  const first = await fetch(`${baseUrl}/billing/settlements/st-03/withdraw`, { method: 'POST', headers: ph });
+  const first = await fetch(`${baseUrl}/billing/settlements/st-own-01/withdraw`, { method: 'POST', headers: ph });
   assert.equal(first.status, 200);
-  const second = await fetch(`${baseUrl}/billing/settlements/st-03/withdraw`, { method: 'POST', headers: ph });
+  const second = await fetch(`${baseUrl}/billing/settlements/st-own-01/withdraw`, { method: 'POST', headers: ph });
   assert.equal(second.status, 400);
+
+  // 归属校验：资源方运营提现其他资源方（prv-idc）的单据必须失败，且与“不存在”一致返回 404
+  const foreign = await fetch(`${baseUrl}/billing/settlements/st-03/withdraw`, { method: 'POST', headers: ph });
+  assert.equal(foreign.status, 404);
 });

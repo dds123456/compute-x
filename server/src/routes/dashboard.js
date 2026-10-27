@@ -59,4 +59,15 @@ r.get('/overview', (req, res) => {
   });
 });
 
+// 全局搜索：在当前可见的资源（型号、规格、地域）中按关键字匹配，最多返回 20 条
+r.get('/search', (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.json({ ok: true, results: [] });
+  const like = `%${q}%`;
+  const results = db.prepare(`SELECT id, spec, gpu_model, region, status, price_hour FROM resources
+    WHERE spec LIKE ? OR gpu_model LIKE ? OR region LIKE ? ORDER BY benchmark DESC LIMIT 20`).all(like, like, like)
+    .map(row => ({ type: '资源', id: row.id, title: row.spec, subtitle: `${row.gpu_model} · ${row.region} · ${row.price_hour} 元/时`, status: row.status }));
+  res.json({ ok: true, results });
+});
+
 export default r;

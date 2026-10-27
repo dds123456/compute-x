@@ -39,6 +39,9 @@ export function calcInstanceCost(inst, asOf = Date.now()) {
   return Math.round(cost * 100) / 100;
 }
 
+// 续费顺延时长：7 天，按小时计价
+export const RENEW_HOURS = 7 * 24;
+
 // 实例状态机迁移
 export const STATUS_ACTIONS = {
   '运行中': ['停止', '重启', '释放', '续费', '变更配置'],
@@ -70,10 +73,16 @@ export function transitionInstance(id, action) {
       if (!['运行中', '异常'].includes(inst.status)) return { ok: false, msg: '当前状态不可重启' };
       db.prepare(`UPDATE instances SET status='运行中' WHERE id=?`).run(id);
       break;
-    case '续费':
+    case '续费': {
+      // 续费按真实扣费：续费时长 7 天 = 168 小时，按小时单价计价（与实例的小时计费口径一致）
+      const fee = Math.round((inst.price_hour || 0) * RENEW_HOURS * 100) / 100;
+      const ent = db.prepare('SELECT balance FROM enterprises WHERE id = ?').get(inst.enterprise_id);
+      if (!ent || ent.balance < fee) return { ok: false, msg: `余额不足（需 ${fee} 元），请先充值` };
+      db.prepare('UPDATE enterprises SET balance = balance - ? WHERE id = ?').run(fee, inst.enterprise_id);
       db.prepare(`UPDATE instances SET status='运行中', expires_at=datetime(expires_at,'+7 days') WHERE id=?`).run(id);
-      notifyByProject(inst, '账单', '续费成功', `${inst.name} 续费成功，到期时间顺延 7 天`);
+      notifyByProject(inst, '账单', '续费成功', `${inst.name} 续费成功，扣费 ${fee} 元，到期时间顺延 7 天`);
       break;
+    }
     case '释放': {
       db.prepare(`UPDATE instances SET status='释放中' WHERE id=?`).run(id);
       setTimeout(() => {

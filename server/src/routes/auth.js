@@ -1,32 +1,79 @@
 import { Router } from 'express';
 import db from '../db.js';
 import { now, genId } from '../utils.js';
-import { createGuestSession, createRateLimiter, createSession, ensureBackendMember, revokeSession, safeMember } from '../security.js';
+import { createGuestSession, createRateLimiter, createSession, createSuperTestSession, ensureBackendMember, ensureSuperTestMember, revokeSession, safeMember, verifyPassword } from '../security.js';
 
 // 游客入口限流：提示词 §3.6 要求 10 分钟 20 次（可用 GUEST_RATE_LIMIT_MAX 覆盖）
 const guestRateLimit = createRateLimiter({ windowMs: 10 * 60 * 1000, max: Number(process.env.GUEST_RATE_LIMIT_MAX || 20), keyPrefix: 'guest' });
 
 const r = Router();
 
+// 登录失败锁定：按账号 + IP 计数，连续 8 次错误后锁定 10 分钟（提示词 §3.6：IP + 账号）
+const LOGIN_FAIL_LIMIT = 8;
+const LOGIN_LOCK_MS = 10 * 60 * 1000;
+const loginFailures = new Map();
+
+function loginKey(req, account) {
+  const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+  return `${ip}|${String(account || '').toLowerCase()}`;
+}
+
+// 超级测试账号：仅在 SUPER_TEST_ENABLED=true 且配置了密码哈希时可用（用于功能测试，不对普通环境开放）
+function superTestLogin(account, password) {
+  if (process.env.SUPER_TEST_ENABLED !== 'true') return null;
+  if (account !== process.env.SUPER_TEST_ACCOUNT || !process.env.SUPER_TEST_PASSWORD_HASH) return null;
+  return verifyPassword(password, process.env.SUPER_TEST_PASSWORD_HASH) ? ensureSuperTestMember() : false;
+}
+
 // 登录：POST /api/auth/login { account, password } 或 { userId } / { username }（兼容一键登录）
 r.post('/login', (req, res) => {
   const { userId, username, account, password } = req.body || {};
+  const key = account || username;
+  const failureKey = loginKey(req, key);
+  const failure = loginFailures.get(failureKey);
+  if (failure && failure.lockedUntil > Date.now()) {
+    res.setHeader('Retry-After', String(Math.ceil((failure.lockedUntil - Date.now()) / 1000)));
+    return res.status(429).json({ ok: false, msg: '登录失败次数过多，请 10 分钟后再试' });
+  }
+
   let member;
-  if (userId) member = db.prepare('SELECT * FROM members WHERE id = ?').get(userId);
+  const superMember = !userId && key ? superTestLogin(key, password) : null;
+  if (superMember === false) member = null;
+  else if (superMember) member = superMember;
+  else if (userId) member = db.prepare('SELECT * FROM members WHERE id = ?').get(userId);
   else {
-    const key = account || username;
     if (!key) return res.status(400).json({ ok: false, msg: '请输入账号' });
     member = db.prepare('SELECT * FROM members WHERE name = ? OR phone = ? OR email = ?').get(key, key, key);
   }
-  if (!member) return res.status(401).json({ ok: false, msg: '账号不存在，请检查后重试' });
+  if (!member) {
+    recordLoginFailure(failureKey);
+    return res.status(401).json({ ok: false, msg: '账号不存在或密码错误，请检查后重试' });
+  }
+  // 游客体验账号只能通过 /auth/guest 进入，不接受账号密码登录
+  if (member.id === 'u-guest' && !superMember) {
+    return res.status(403).json({ ok: false, msg: '游客账号请使用“游客体验”入口进入' });
+  }
   // 密码校验：默认 123456；一键登录（无 password 字段）跳过
-  if (password !== undefined && member.password && password !== member.password) {
+  if (!superMember && password !== undefined && member.password && password !== member.password) {
+    recordLoginFailure(failureKey);
     return res.status(401).json({ ok: false, msg: '密码错误，请重试' });
   }
+  loginFailures.delete(failureKey);
   const ent = db.prepare('SELECT * FROM enterprises WHERE id = ?').get(member.enterprise_id);
-  const session = createSession(member.id);
+  // 超管使用带 TTL 的签名会话（sat. 前缀），与普通会话隔离
+  const session = superMember ? createSuperTestSession() : createSession(member.id);
   res.json({ ok: true, token: session.token, expiresAt: session.expiresAt, member: safeMember(member), enterprise: ent, isGuest: 0 });
 });
+
+function recordLoginFailure(failureKey) {
+  const current = loginFailures.get(failureKey) || { count: 0, lockedUntil: 0 };
+  current.count += 1;
+  if (current.count >= LOGIN_FAIL_LIMIT) {
+    current.lockedUntil = Date.now() + LOGIN_LOCK_MS;
+    current.count = 0;
+  }
+  loginFailures.set(failureKey, current);
+}
 
 // 游客模式：无需账号密码，一键进入（只读成员身份 + 游客标记）
 r.post('/guest', guestRateLimit, (_req, res) => {
