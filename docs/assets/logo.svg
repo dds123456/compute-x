@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t d">
+  <title id="t">ComputeX logo</title>
+  <desc id="d">A GPU chip with a lightning bolt inside a metering ring, representing on-demand compute rental and metered billing.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f2d5c"/>
+      <stop offset="0.55" stop-color="#2f54eb"/>
+      <stop offset="1" stop-color="#13c2c2"/>
+    </linearGradient>
+    <linearGradient id="chip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbe7ff"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff7c2"/>
+      <stop offset="1" stop-color="#faad14"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角底板 -->
+  <rect x="8" y="8" width="224" height="224" rx="52" fill="url(#bg)"/>
+
+  <!-- 计费环：一圈刻度，表示按秒/按小时计量 -->
+  <circle cx="120" cy="120" r="88" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="10"/>
+  <g stroke="#ffffff" stroke-opacity="0.9" stroke-width="5" stroke-linecap="round">
+    <line x1="120" y1="28" x2="120" y2="42"/>
+    <line x1="212" y1="120" x2="198" y2="120"/>
+    <line x1="120" y1="212" x2="120" y2="198"/>
+    <line x1="28" y1="120" x2="42" y2="120"/>
+    <line x1="182" y1="58" x2="172" y2="68"/>
+    <line x1="182" y1="182" x2="172" y2="172"/>
+    <line x1="58" y1="182" x2="68" y2="172"/>
+    <line x1="58" y1="58" x2="68" y2="68"/>
+  </g>
+
+  <!-- GPU 芯片：引脚 -->
+  <g fill="#ffffff" fill-opacity="0.85">
+    <rect x="72" y="50" width="10" height="18" rx="3"/>
+    <rect x="98" y="50" width="10" height="18" rx="3"/>
+    <rect x="124" y="50" width="10" height="18" rx="3"/>
+    <rect x="150" y="50" width="10" height="18" rx="3"/>
+    <rect x="72" y="172" width="10" height="18" rx="3"/>
+    <rect x="98" y="172" width="10" height="18" rx="3"/>
+    <rect x="124" y="172" width="10" height="18" rx="3"/>
+    <rect x="150" y="172" width="10" height="18" rx="3"/>
+    <rect x="50" y="72" width="18" height="10" rx="3"/>
+    <rect x="50" y="98" width="18" height="10" rx="3"/>
+    <rect x="50" y="124" width="18" height="10" rx="3"/>
+    <rect x="50" y="150" width="18" height="10" rx="3"/>
+    <rect x="172" y="72" width="18" height="10" rx="3"/>
+    <rect x="172" y="98" width="18" height="10" rx="3"/>
+    <rect x="172" y="124" width="18" height="10" rx="3"/>
+    <rect x="172" y="150" width="18" height="10" rx="3"/>
+  </g>
+
+  <!-- GPU 芯片本体 -->
+  <rect x="72" y="68" width="96" height="104" rx="14" fill="url(#chip)"/>
+  <rect x="84" y="80" width="72" height="80" rx="8" fill="none" stroke="#2f54eb" stroke-opacity="0.35" stroke-width="3"/>
+
+  <!-- 闪电：算力 -->
+  <path d="M128 88 L100 124 L118 124 L110 152 L140 114 L122 114 Z" fill="url(#bolt)" stroke="#d48806" stroke-width="2" stroke-linejoin="round"/>
+</svg>
