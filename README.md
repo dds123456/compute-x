@@ -134,7 +134,7 @@ npm run dev
 # → http://localhost:5173
 ```
 
-打开 **http://localhost:5173**，点击登录页的演示账号即可一键进入。
+打开 **https://compute-k50rpn6ej-alex-71fa.vercel.app/login**，点击登录页的演示账号即可一键进入。
 
 ### 4️⃣ 运行测试与构建
 
