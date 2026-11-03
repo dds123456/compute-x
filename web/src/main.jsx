@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import App from './App.jsx';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -18,6 +19,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     >
       <BrowserRouter>
         <App />
+        <SpeedInsights />
       </BrowserRouter>
     </ConfigProvider>
   </React.StrictMode>
