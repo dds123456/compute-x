@@ -169,19 +169,56 @@ export function verifyPassword(password, stored) {
   return actual.length === expectedBuffer.length && crypto.timingSafeEqual(actual, expectedBuffer);
 }
 
+// 普通登录会话：签名令牌（usr. 前缀，HMAC 由 SESSION_SECRET 生成）。
+// 令牌自带用户与过期时间，任何 Vercel 实例都能校验，不再依赖实例本地的 SQLite（原先多实例下会 401 踢回登录页）。
+// 代价：服务端无法在过期前让令牌失效；撤销只记在当前实例内存中（见 revokedSignedTokens）。
 export function createSession(userId, ttlMs = SESSION_TTL_MS) {
-  const token = crypto.randomBytes(32).toString('base64url');
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-  db.prepare('DELETE FROM auth_sessions WHERE expires_at < ?').run(new Date().toISOString());
-  db.prepare('INSERT INTO auth_sessions (token_hash,user_id,expires_at) VALUES (?,?,?)')
-    .run(tokenHash, userId, expiresAt);
-  return { token, expiresAt };
+  const expiresAtMs = Date.now() + ttlMs;
+  const payload = Buffer.from(JSON.stringify({ typ: 'usr', sub: String(userId), exp: expiresAtMs })).toString('base64url');
+  const signature = crypto.createHmac('sha256', sessionSecret()).update(payload).digest('base64url');
+  return { token: `usr.${payload}.${signature}`, expiresAt: new Date(expiresAtMs).toISOString() };
+}
+
+const revokedSignedTokens = new Map();
+
+function verifySignedSession(token) {
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== 'usr') return null;
+  const [, payload, signature] = parts;
+  const expected = crypto.createHmac('sha256', sessionSecret()).update(payload).digest('base64url');
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (claims.typ !== 'usr' || typeof claims.sub !== 'string' || !Number.isFinite(claims.exp) || claims.exp <= Date.now()) return null;
+    return { userId: claims.sub, expiresAt: claims.exp };
+  } catch {
+    return null;
+  }
+}
+
+// 后台演示账号在新实例上可能还没有记录，按需补建，保证令牌在任何实例都能解析
+function sessionMember(userId) {
+  const member = db.prepare('SELECT * FROM members WHERE id = ?').get(userId);
+  if (member) return member;
+  if (userId === 'u-admin-platform') return ensureBackendMember('平台管理员');
+  if (userId === 'u-provider-operator') return ensureBackendMember('资源方运营');
+  return undefined;
 }
 
 export function revokeSession(token) {
   if (!token) return;
   if (token.startsWith('gst.')) return;
+  if (token.startsWith('usr.')) {
+    // 签名令牌只能在当前实例内撤销：记入内存表，直到令牌自然过期
+    const signed = verifySignedSession(token);
+    if (signed) revokedSignedTokens.set(token, signed.expiresAt);
+    for (const [key, expiresAt] of revokedSignedTokens) {
+      if (expiresAt <= Date.now()) revokedSignedTokens.delete(key);
+    }
+    return;
+  }
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(tokenHash);
 }
@@ -206,6 +243,11 @@ export function authenticateApi(req, res, next) {
     if (!superTestSession) return res.status(401).json({ ok: false, msg: '测试账号会话已过期，请重新登录' });
     sessionUserId = superTestSession.userId;
     member = ensureSuperTestMember();
+  } else if (token.startsWith('usr.')) {
+    const signed = verifySignedSession(token);
+    if (!signed || revokedSignedTokens.has(token)) return res.status(401).json({ ok: false, msg: '登录已过期，请重新登录' });
+    sessionUserId = signed.userId;
+    member = sessionMember(sessionUserId);
   } else {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const session = db.prepare('SELECT * FROM auth_sessions WHERE token_hash = ?').get(tokenHash);

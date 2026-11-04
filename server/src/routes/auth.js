@@ -53,7 +53,15 @@ r.post('/login', (req, res) => {
   if (member.id === 'u-guest' && !superMember) {
     return res.status(403).json({ ok: false, msg: '游客账号请使用“游客体验”入口进入' });
   }
-  // 密码校验：默认 123456；一键登录（无 password 字段）跳过
+  // 一键登录（只传 userId、不传密码）仅限演示账号；其它账号必须提交密码，不能只凭账号名或手机号登录
+  const oneClick = !superMember && userId !== undefined && password === undefined;
+  if (!superMember && !oneClick && password === undefined) {
+    return res.status(400).json({ ok: false, msg: '请输入密码' });
+  }
+  if (oneClick && !member.is_demo) {
+    return res.status(403).json({ ok: false, msg: '该账号需要输入密码登录' });
+  }
+  // 密码校验：默认 123456
   if (!superMember && password !== undefined && member.password && password !== member.password) {
     recordLoginFailure(failureKey);
     return res.status(401).json({ ok: false, msg: '密码错误，请重试' });
